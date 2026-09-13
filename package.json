@@ -1,0 +1,175 @@
+{
+  "name": "pretty-commit",
+  "displayName": "Pretty Commit",
+  "description": "SCM 提交历史右键 → 大窗口看 diff；AI 分析按需点击（整笔 / 单文件），代码量大时先提示；框选随时送 Chat。",
+  "version": "0.1.0",
+  "publisher": "local",
+  "license": "MIT",
+  "private": true,
+  "icon": "images/icon.png",
+  "engines": {
+    "vscode": "^1.94.0"
+  },
+  "categories": [
+    "Other",
+    "SCM Providers"
+  ],
+  "keywords": [
+    "git",
+    "commit",
+    "diff",
+    "scm",
+    "chat",
+    "keybindings"
+  ],
+  "main": "./extension.js",
+  "enabledApiProposals": [
+    "contribSourceControlHistoryItemMenu"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "prettyCommit.openHistoryItem",
+        "title": "Pretty Commit: 查看此提交"
+      },
+      {
+        "command": "prettyCommit.openHead",
+        "title": "Pretty Commit: Open HEAD（最近提交）"
+      },
+      {
+        "command": "prettyCommit.pickCommit",
+        "title": "Pretty Commit: 打开提交…"
+      },
+      {
+        "command": "prettyCommit.addSelection",
+        "title": "Pretty Commit: 把选中的 diff 加进 Chat"
+      },
+    {
+      "command": "prettyCommit.raisePanel",
+      "title": "Pretty Commit: 把面板窗口带到前台"
+    },
+    {
+      "command": "prettyCommit.rebind",
+      "title": "Pretty Commit: 修改快捷键…"
+    },
+    {
+      "command": "prettyCommit.enableInTerminal",
+      "title": "Pretty Commit: 让快捷键在终端里也生效"
+    }
+  ],
+    "menus": {
+      "scm/historyItem/context": [
+        {
+          "command": "prettyCommit.openHistoryItem",
+          "when": "scmProvider == git",
+          "group": "navigation@50"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "prettyCommit.openHistoryItem",
+          "when": "false"
+        }
+      ]
+    },
+    "keybindings": [
+    {
+      "command": "prettyCommit.pickCommit",
+      "key": "alt+q"
+    },
+    {
+      "command": "prettyCommit.addSelection",
+      "key": "ctrl+l",
+      "when": "activeWebviewPanelId == prettyCommit"
+    },
+    {
+      "command": "prettyCommit.raisePanel",
+      "key": "alt+shift+q"
+    }
+  ],
+    "configuration": {
+      "title": "Pretty Commit",
+      "properties": {
+        "prettyCommit.moveToNewWindow": {
+          "type": "boolean",
+          "default": false,
+          "description": "把面板弹成独立 OS 窗口（执行 workbench.action.moveEditorToNewWindow）。**默认关**：弹出后扩展宿主仍在原窗口，而打开 Chat 是宿主命令，必然把原窗口带到前台、把面板窗口压到后面 —— 两个 OS 窗口同时只能有一个在最前面，这点无解（扩展 API 没有聚焦窗口的能力，只能靠 X11 请求硬抬）。嵌在编辑器里就没有这个问题：面板和 Chat 在同一个窗口，用分栏就能同屏看。打开本项才走弹窗那条路。"
+        },
+        "prettyCommit.recentCommitCount": {
+          "type": "number",
+          "default": 25,
+          "minimum": 1,
+          "description": "命令面板「打开提交…」默认列出的最近提交条数。列表底部可「加载更多」，不断往后翻。"
+        },
+        "prettyCommit.wholePromptDelta": {
+          "type": "number",
+          "default": 1000,
+          "minimum": 0,
+          "description": "整笔 commit 分析的 Δ 超过该值时，点击后先提示「代码量较大」并给出预计时长/Token，确认后才送 Chat。"
+        },
+        "prettyCommit.filePromptLines": {
+          "type": "number",
+          "default": 500,
+          "minimum": 0,
+          "description": "单文件分析的 diff 行数超过该值时，点击后先提示「代码量较大」并给出预计时长/Token，确认后才送 Chat。"
+        },
+        "prettyCommit.fillEditorArea": {
+          "type": "boolean",
+          "default": true,
+          "description": "打开提交时把面板所在分栏展开、占满整个编辑区（其它分栏缩到最小，不关闭、也不隐藏侧边栏）。走的是 workbench.action.minimizeOtherEditors（\"Expand Editor Group\"，内部 arrangeGroups(1) → expandView）。注意它只作用于「活动分栏」，所以会先把面板那一栏设为活动栏；只有一栏时该命令本身就是 no-op。关掉则面板只是普通分栏，宽度靠拖分隔条自己调。"
+        },
+        "prettyCommit.openBeside": {
+          "type": "boolean",
+          "default": true,
+          "description": "**只在 fillEditorArea=false 时有意义**：面板开在「旁边分栏」（左代码 / 右 diff）而不是占用当前分栏。fillEditorArea=true（默认）时不切分屏，直接沿用当前分栏再展开，避免留下多余的空分栏。"
+        },
+        "prettyCommit.chatBesidePanel": {
+          "type": "boolean",
+          "default": true,
+          "description": "送 Chat 后把 Chat 标签页挪到相邻分栏，使 diff 与 AI 回答同屏可见（用 moveEditorToLeftGroup / moveEditorToRightGroup：bundle 里这两个命令在缺相邻栏时会新建一栏，所以目标栏一定存在）。若面板当前是「展开占满编辑区」的状态，会先恢复等宽再挪，否则新栏会继承展开状态、把面板挤成一条缝。关掉则 Chat 会盖在面板上，需要 Alt+Shift+Q 切回。"
+        },
+        "prettyCommit.hideUnchangedFiles": {
+          "type": "boolean",
+          "default": true,
+          "description": "从文件列表里省略「无内容变化」的条目（纯重命名、仅权限/模式变更）。它们 Δ=0，对 review 没有信息量，但会让文件数虚高；关掉则全部列出。"
+        },
+        "prettyCommit.addToChat": {
+          "type": "string",
+          "enum": [
+            "input",
+            "context",
+            "both"
+          ],
+          "enumDescriptions": [
+            "把「提交+文件+diff 片段+提问」填进 Cursor Chat 输入框（最可靠，内容一定在框里；会新开一个 chat 标签页）",
+            "尝试把选区作为代码上下文附加到当前 Chat（依赖 Cursor 内部命令，需要已有一个打开的 chat；失败会自动退到 input）",
+            "两者都做：既附加代码上下文，也把提示词填进输入框"
+          ],
+          "default": "input",
+          "description": "Ctrl+L / 面板按钮「添加到 Chat」的行为。"
+        },
+        "prettyCommit.refocusPanelAfterChat": {
+          "type": "boolean",
+          "default": true,
+          "description": "**仅在 moveToNewWindow=true（面板弹成独立窗口）时有意义**：送 Chat 后把面板窗口再抬回前台（走 X11 置前），代价是 Chat 窗口退到后面、需要点一下才能打字。嵌入模式（默认）下本项不生效 —— 同一个窗口里没有「被压到后面」的问题，抢焦点只会妨碍往 Chat 输入框打字。"
+        },
+        "prettyCommit.focusWindow": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "off"
+          ],
+          "enumDescriptions": [
+            "自动把面板所在的 OS 窗口抬到前台（仅 Linux + X11）。扩展 API 没有聚焦窗口的能力，这里调用随包附带的 scripts/x11-raise.py，用 python3 + libX11 直接发 EWMH 的 _NET_ACTIVE_WINDOW 请求，不需要 xdotool/wmctrl",
+            "不尝试置前。面板窗口可能生成在其它窗口后面，用 Alt+Shift+Q 手动叫回"
+          ],
+          "default": "auto",
+          "description": "「把弹出的面板窗口带到前台」的实现方式。仅在面板真的弹成独立窗口时有意义。"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "package": "python3 scripts/build-vsix.py"
+  }
+}

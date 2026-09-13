@@ -1,0 +1,895 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:;">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pretty Commit</title>
+<style>
+  :root {
+    --bg: var(--vscode-editor-background, #1e1e1e);
+    --fg: var(--vscode-editor-foreground, #d4d4d4);
+    --dim: var(--vscode-descriptionForeground, #9d9d9d);
+    --border: var(--vscode-panel-border, #2b2b2b);
+    --add-bg: rgba(46, 160, 67, 0.16);
+    --del-bg: rgba(248, 81, 73, 0.15);
+    --hh-bg: rgba(0, 127, 255, 0.12);
+    --hh-fg: var(--vscode-textLink-foreground, #4daafc);
+    --mono: var(--vscode-editor-font-family, ui-monospace, Menlo, Consolas, monospace);
+    --sel: var(--vscode-list-activeSelectionBackground, #04395e);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--vscode-font-family, system-ui, sans-serif);
+    font-size: 13px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  /* ---- 顶栏 ---- */
+  header.bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+    background: var(--vscode-editorWidget-background, #252526);
+    flex: 0 0 auto;
+  }
+  .meta { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  #commit-meta { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #commit-sub { font-size: 11px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .spacer { flex: 1; }
+  .ctrl { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; }
+  label.switch { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; }
+  button {
+    background: var(--vscode-button-secondaryBackground, #3a3d41);
+    color: var(--vscode-button-secondaryForeground, #ddd);
+    border: 1px solid transparent;
+    border-radius: 3px;
+    padding: 3px 10px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  button:hover:not(:disabled) { background: var(--vscode-button-secondaryHoverBackground, #45494e); }
+  button:disabled { opacity: 0.45; cursor: default; }
+  button.primary {
+    background: var(--vscode-button-background, #0e639c);
+    color: var(--vscode-button-foreground, #fff);
+  }
+  button.primary:hover:not(:disabled) { background: var(--vscode-button-hoverBackground, #1177bb); }
+  kbd {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--dim);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 0 3px;
+    background: rgba(127,127,127,.08);
+  }
+  /* ---- 状态条 ---- */
+  #status {
+    flex: 0 0 auto;
+    padding: 3px 10px;
+    font-size: 12px;
+    border-bottom: 1px solid var(--border);
+    color: var(--dim);
+    background: rgba(127,127,127,.06);
+  }
+  #status.error { color: var(--vscode-errorForeground, #f48771); }
+  #status.hidden { display: none; }
+  #status.ok { color: var(--vscode-charts-green, #89d185); }
+  #toast {
+    position: fixed;
+    right: 12px;
+    bottom: 12px;
+    max-width: 60%;
+    background: var(--vscode-notifications-background, #333);
+    color: var(--vscode-notifications-foreground, #ddd);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 8px 12px;
+    font-size: 12px;
+    opacity: 0;
+    transition: opacity .15s;
+    z-index: 50;
+    pointer-events: none;
+  }
+  #toast.show { opacity: 1; }
+  /* ---- 主体：左列表 + 右 diff ---- */
+  main { flex: 1; display: flex; min-height: 0; }
+  aside {
+    flex: 0 0 300px;
+    min-width: 180px;
+    max-width: 46%;
+    resize: horizontal;
+    overflow-x: hidden;
+    overflow-y: auto;
+    border-right: 1px solid var(--border);
+  }
+  #list { display: flex; flex-direction: column; }
+  .frow {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 4px 8px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .frow:hover { background: rgba(127,127,127,.1); }
+  .frow.active { background: var(--sel); color: var(--vscode-list-activeSelectionForeground, #fff); }
+  .fpath {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    direction: rtl; /* 长路径优先露出文件名尾段 */
+    text-align: left;
+    font-family: var(--mono);
+    font-size: 12px;
+  }
+  .fstats { margin-left: auto; font-size: 11px; font-family: var(--mono); flex: 0 0 auto; }
+  .add-c { color: var(--vscode-charts-green, #89d185); }
+  .del-c { color: var(--vscode-charts-red, #f14c4c); }
+  .glyph { font-family: var(--mono); font-size: 11px; flex: 0 0 auto; }
+  #listEmpty { padding: 10px; color: var(--dim); }
+  /* ---- 右 diff 区 ---- */
+  section { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  #diffhead {
+    flex: 0 0 auto;
+    padding: 6px 10px;
+    font-family: var(--mono);
+    font-size: 12px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    gap: 10px;
+    align-items: baseline;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #diffnote { flex: 0 0 auto; padding: 4px 10px; font-size: 11px; color: var(--dim); }
+  #placeholder {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--dim);
+    font-size: 13px;
+    text-align: center;
+    padding: 20px;
+    white-space: pre-line;
+  }
+  #diffbody {
+    flex: 1;
+    position: relative;
+    overflow-y: auto;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.5;
+    padding: 4px 0;
+  }
+  .hl { white-space: pre; min-height: 1.5em; padding: 0 10px; user-select: text; }
+  .hl.ctx { color: var(--fg); }
+  .hl.add { background: var(--add-bg); }
+  .hl.del { background: var(--del-bg); }
+  .hh {
+    background: var(--hh-bg);
+    color: var(--hh-fg);
+    font-weight: 600;
+    padding: 2px 10px;
+    margin-top: 2px;
+    cursor: pointer;
+  }
+  .hh.cur { outline: 1px solid var(--hh-fg); }
+  .note { padding: 3px 10px; color: var(--dim); font-size: 11px; }
+  .notrunc { border-top: 1px dashed var(--border); }
+  /* 选中有内容时浮出的「添加到 Chat」按钮（Ctrl+L 的鼠标等价物） */
+  #sel-add {
+    position: fixed;
+    right: 18px;
+    bottom: 44px;
+    z-index: 60;
+    display: none;
+    box-shadow: 0 2px 8px rgba(0,0,0,.35);
+  }
+  #sel-add.show { display: inline-block; }
+  #sel-add.hot {
+    background: var(--vscode-button-background, #0e639c);
+    color: var(--vscode-button-foreground, #fff);
+  }
+  /* ---- 底栏 ---- */
+  footer {
+    flex: 0 0 auto;
+    padding: 3px 10px;
+    border-top: 1px solid var(--border);
+    color: var(--dim);
+    font-size: 11px;
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    white-space: nowrap;
+    overflow: hidden;
+    background: var(--vscode-editorWidget-background, #252526);
+  }
+  ::selection { background: rgba(0,127,255,.35); }
+  /* 通用隐藏：此前只有 #status.hidden 命中，导致 #placeholder / #diffbody 等
+     切换 class="hidden" 时并没有真的隐藏，空占位块还占着高度 */
+  .hidden { display: none !important; }
+  /* 宿主版本诊断条：宿主 JS 是旧版（改了 extension.js 没 Reload Window）时出现。
+     panel.html 每次开面板都从磁盘现读，所以只有这里能发现“改了没生效”。 */
+  #diag {
+    padding: 7px 14px; font-size: 12px; line-height: 1.5;
+    background: rgba(255,180,0,.14); border-bottom: 1px solid rgba(255,180,0,.45);
+    color: var(--fg);
+  }
+  #diag b { color: #ffb400; }
+  #diag code { background: rgba(127,127,127,.22); padding: 0 4px; border-radius: 3px; }
+  #diag button {
+    margin-left: 8px; font-size: 11px; padding: 2px 8px; cursor: pointer;
+    background: rgba(255,180,0,.22); border: 1px solid rgba(255,180,0,.55);
+    color: var(--fg); border-radius: 4px;
+  }
+</style>
+</head>
+<body>
+  <header class="bar">
+    <div class="meta">
+      <div id="commit-meta">Pretty Commit</div>
+      <div id="commit-sub"></div>
+    </div>
+    <div class="spacer"></div>
+    <div class="ctrl">
+      <button id="btn-analyze-file" title="分析当前文件：改了什么、在整笔提交里起什么作用、有无风险（Shift+F）。代码量大时先提示">本文件分析</button>
+      <button id="btn-analyze" class="primary" title="整笔 for-what / why（Shift+A）。代码量大时先提示">整笔分析</button>
+      <button id="btn-close" title="关闭 (Esc)">关闭</button>
+    </div>
+  </header>
+  <div id="diag" class="hidden"></div>
+  <div id="status" class="hidden"></div>
+
+  <main>
+    <aside>
+      <div id="list"></div>
+    </aside>
+    <section>
+      <div id="diffhead" class="hidden"></div>
+      <div id="diffnote" class="hidden"></div>
+      <div id="placeholder">正在读取…</div>
+      <div id="diffbody" class="hidden"></div>
+    </section>
+  </main>
+
+  <footer>
+    <span><kbd>j</kbd>/<kbd>k</kbd> 文件</span>
+    <span><kbd>Enter</kbd>/<kbd>h</kbd> 展开/折叠</span>
+    <span><kbd>n</kbd>/<kbd>p</kbd> 下一个/上一个 hunk</span>
+    <span><kbd>Ctrl</kbd>+<kbd>L</kbd> / <kbd>c</kbd> 选区加进 Chat</span>
+    <span><kbd>Shift</kbd>+<kbd>A</kbd> 整笔分析</span>
+    <span><kbd>Shift</kbd>+<kbd>F</kbd> 本文件分析</span>
+    <span><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>Q</kbd> 切回面板</span>
+    <span><kbd>Esc</kbd> 关闭</span>
+    <span style="margin-left:auto; opacity:.8" id="host-build"></span>
+    <span id="ai-hint"></span>
+  </footer>
+
+  <button id="sel-add" title="把选中的 diff 行加进 Chat 上下文（快捷键 Ctrl+L）">＋ 添加到 Chat</button>
+
+  <div id="toast"></div>
+
+<script>
+(function () {
+  'use strict';
+  const vscode = acquireVsCodeApi();
+
+  // 页面里任何未捕获异常都上报给宿主（显示成错误消息，方便定位“白屏”）
+  window.addEventListener('error', (ev) => {
+    try {
+      vscode.postMessage({ type: 'ext-error', text: String(ev.message || ev.error || 'unknown') });
+    } catch { /* 忽略 */ }
+  });
+  window.addEventListener('unhandledrejection', (ev) => {
+    try {
+      vscode.postMessage({ type: 'ext-error', text: 'Promise: ' + String(ev.reason && ev.reason.message || ev.reason || 'unknown') });
+    } catch { /* 忽略 */ }
+  });
+
+  // 就绪握手：宿主在收到本消息前会把发给我们的消息排队，不会丢首帧
+  vscode.postMessage({ type: 'webview-ready' });
+
+  const $ = (s) => document.querySelector(s);
+
+  // ---------- 把自己的 OS 窗口抬到前台 ----------
+  // 为什么要在这里做：面板「弹出为独立窗口」后，VS Code 会把 webview 渲染到那个新窗口里，
+  // 但扩展宿主（跑 extension.js 的那个进程）仍然留在原窗口。宿主执行的所有命令
+  // ——包括 workbench.action.chat.open——都作用在原窗口上，于是：
+  //   · 弹窗刚出来时它在新窗口里，谁也不去激活它 → 看着像“在后台出来了”；
+  //   · 送 Chat 后原窗口被带到前面 → 面板窗口被压到后面，像“隐藏了”。
+  // 宿主没有任何 API 能聚焦别的 OS 窗口（vscode.window 里没有焦点相关的接口，
+  // 工作台唯一的 focusWindow 是原生主进程服务，扩展拿不到）。
+  // 唯一运行在「面板那个窗口」里的代码就是本页的 JS，所以只能靠下面这几句。
+  function raiseWindow(why) {
+    const focus1 = () => {
+      try { window.focus(); } catch { /* 忽略 */ }
+      try { if (window.parent && window.parent !== window) window.parent.focus(); } catch { /* 跨域允许 */ }
+      try { if (window.top && window.top !== window) window.top.focus(); } catch { /* 跨域允许 */ }
+    };
+    focus1();
+    // 独立窗口刚被创建时，第一发可能落在窗口还没完成激活的时间点上，补两发
+    setTimeout(focus1, 250);
+    setTimeout(focus1, 800);
+    // 把「本页到底是不是可见/有焦点」一并回报：这是唯一能区分两种失败场景的证据 ——
+    // visibilityState=hidden 说明面板被同一窗口里的别的标签页盖住了（要 reveal），
+    // visible 但没焦点说明是另一个 OS 窗口被压在后面（要 window.focus()）。
+    try {
+      vscode.postMessage({
+        type: 'raised',
+        why: why || '',
+        visibility: document.visibilityState,
+        focused: document.hasFocus(),
+      });
+    } catch { /* 忽略 */ }
+  }
+
+  // 主动问宿主构建版本：宿主若不理（旧版 extension.js 不认识这条消息），
+  // 说明运行的是旧代码 —— 这时页面上的新功能有一半是空的，必须提示重载。
+  let hostBuildTimer = setTimeout(() => {
+    if (!S.hostVersion) {
+      S.staleHost = true;
+      try { renderDiag(); } catch { /* 忽略 */ }
+    }
+  }, 800);
+  vscode.postMessage({ type: 'hostBuild' });
+
+  const STATUS_GLYPH = { A: '+', M: '~', D: '−', R: '»', T: '!' };
+  const STATUS_NAME = { A: '新增', M: '修改', D: '删除', R: '重命名', T: '类型变更' };
+
+  const S = {
+    files: [],
+    idx: 0,
+    open: true,      // 右侧是否展开
+    hunkIdx: 0,      // 当前文件里的当前 hunk
+    lastSel: null,   // 最近一次有效选区 {path, text}：点浮动按钮时选区会先收起，得留一份
+    hiddenUnchanged: 0, // 宿主省略了多少个「无内容变化」文件
+    hostVersion: '', // 宿主 JS 的构建标识（被 commit 消息带下来）
+    staleHost: false, // 宿主没带 hostVersion → 运行的是旧版 extension.js
+    delta: 0,
+    shortSha: '',
+    subject: '',
+    note: '',
+    busy: false,
+  };
+
+  // ---------- 消息 ----------
+  window.addEventListener('message', (ev) => {
+    const m = ev.data;
+    if (!m || !m.type) return;
+    switch (m.type) {
+      case 'ping':
+        vscode.postMessage({ type: 'pong', id: m.id });
+        break;
+      case 'commit':
+        try {
+          applyCommit(m.commit, m.hostVersion);
+        } catch (e) {
+          try {
+            vscode.postMessage({ type: 'ext-error', text: 'applyCommit: ' + String(e && e.message || e) });
+          } catch { /* 忽略 */ }
+        }
+        break;
+      case 'wantSelection': {
+        // 宿主收到清单快捷键（Ctrl+L）后反过来问：现在选中的是什么
+        const s = currentSelection();
+        vscode.postMessage({ type: 'selection', path: s ? s.path : '', text: s ? s.text : '' });
+        break;
+      }
+      case 'hostBuild': // 回应页面的版本询问
+        clearTimeout(hostBuildTimer);
+        S.hostVersion = m.hostVersion || '';
+        S.staleHost = !S.hostVersion;
+        {
+          const hb = $('#host-build');
+          if (hb) hb.textContent = S.hostVersion ? `宿主 ${S.hostVersion}` : '宿主 旧版(未重载)';
+        }
+        renderDiag();
+        break;
+      case 'raise': // 宿主请求：把面板所在的 OS 窗口抬到前台
+        raiseWindow(m.why);
+        break;
+      case 'status':
+        showStatus(m.text, m.kind);
+        break;
+      case 'busy':
+        S.busy = !!m.value;
+        renderHeader();
+        break;
+      case 'toast':
+        toast(m.text);
+        break;
+    }
+  });
+
+  // 宿主版本诊断条。出现 = 运行中的 extension.js 是旧版（改了 host 代码没 Reload Window）。
+  // 这解释了「明明改好了却还是老样子」：宿主 JS 只在窗口启动时 require 一次，
+  // 而 panel.html 每次开面板都从磁盘现读 —— 于是页面是新的、宿主是旧的。
+  function renderDiag() {
+    const el = $('#diag');
+    if (!S.staleHost) {
+      el.classList.add('hidden');
+      el.textContent = '';
+      return;
+    }
+    el.classList.remove('hidden');
+    el.innerHTML =
+      '<b>宿主代码是旧版</b> —— 页面（panel.html）是刚从磁盘读的新版，但扩展宿主的 ' +
+      '<code>extension.js</code> 只在窗口启动时加载一次，所以「主机侧」的新改动（Δ=0 过滤、' +
+      'Ctrl+L 送 Chat 的新逻辑、弹窗策略）都还没生效。<br>' +
+      '按 <code>Ctrl+Shift+P</code> → <code>Developer: Reload Window</code> 后重新 <code>Alt+Q</code> 即可。' +
+      '<button id="diag-reload">重载窗口</button>';
+    const btn = $('#diag-reload');
+    if (btn) btn.addEventListener('click', () => vscode.postMessage({ type: 'reloadWindow' }));
+  }
+
+  function applyCommit(c, hostVersion) {
+    // 宿主 JS 是旧版时（改了 extension.js 但没 Reload Window），hostVersion 不会来。
+    // panel.html 是每次开面板时从磁盘现读的，所以只有页面这边能发现这件事 —— 必须主动提示，
+    // 否则「改了没生效」会被误判成「功能没做」。
+    S.staleHost = !hostVersion;
+    S.hostVersion = hostVersion || '';
+    const hb = $('#host-build');
+    if (hb) hb.textContent = hostVersion ? `宿主 ${hostVersion}` : '宿主 旧版(未重载)';
+    S.hiddenUnchanged = c.hiddenUnchanged || 0; // 被省略的「无内容变化」文件数（纯重命名/权限变更）
+    const all = c.files || [];
+    // 老宿主不过滤 Δ=0（纯重命名 / 仅权限变更）；新宿主已经在 toViewModel 里滤过了。
+    // 判据：新宿主一定会带上 hiddenUnchanged 字段（哪怕是 0），老宿主不会。
+    const hostFiltered = typeof c.hiddenUnchanged === 'number';
+    const noContent = (f) => !f.binary && !f.added && !f.deleted;
+    const omitted = hostFiltered ? [] : all.filter(noContent);
+    S.files = hostFiltered ? all : all.filter((f) => !noContent(f));
+    if (!hostFiltered) S.hiddenUnchanged = omitted.length;
+    S.idx = 0;
+    S.open = true;
+    S.hunkIdx = 0;
+    S.delta = c.delta || 0;
+    S.shortSha = c.shortSha || '';
+    S.subject = c.subject || '';
+    S.note = c.note || '';
+    renderDiag();
+    $('#commit-meta').textContent = `${S.shortSha}  ${S.subject}`;
+    const sb = [];
+    sb.push(`Δ=${S.delta}`);
+    sb.push(`+${c.adds} / −${c.dels}`);
+    const shown = S.files.length;
+    const total = c.totalFiles || all.length || shown;
+    sb.push(shown === total ? `${shown} 个文件` : `${shown}/${total} 个文件`);
+    if (S.hiddenUnchanged > 0) sb.push(`省略 ${S.hiddenUnchanged} 个无内容变化文件`);
+    $('#commit-sub').textContent = sb.join('   ·   ');
+    showStatus('');
+    renderHeader();
+    renderList();
+    renderDiff();
+  }
+
+  // ---------- 顶栏 ----------
+  function renderHeader() {
+    const f = curFile();
+    const hasCommit = !!S.shortSha;
+    const whole = $('#btn-analyze');
+    whole.disabled = S.busy || !hasCommit;
+    whole.textContent = S.busy ? '分析中…' : '整笔分析';
+
+    // 单文件分析需要有选中的文件，且该文件确实有可看的 diff
+    const file = $('#btn-analyze-file');
+    const canFile = !S.busy && hasCommit && !!f && !f.binary && f.hunks.length > 0;
+    file.disabled = !canFile;
+    file.title = !hasCommit
+      ? '还没有打开提交'
+      : !f
+        ? '先选中一个文件'
+        : f.binary
+          ? '二进制文件没有可分析的 diff'
+          : !f.hunks.length
+            ? '该文件没有行级改动'
+            : `分析 ${f.path}（Shift+F）；代码量大时先提示`;
+
+    // 明确告诉用户：不会自动发送，点按钮才分析
+    $('#ai-hint').textContent = hasCommit ? `按需分析，不会自动发送 · 整笔 Δ=${S.delta}` : '';
+  }
+
+  // ---------- 左列表 ----------
+  function renderList() {
+    const list = $('#list');
+    list.textContent = '';
+    if (!S.files.length) {
+      const d = document.createElement('div');
+      d.id = 'listEmpty';
+      d.textContent = !S.shortSha ? '（数据未到）' : S.hiddenUnchanged > 0 ? '（只有纯重命名/权限变更）' : '（无文件改动）';
+      list.appendChild(d);
+      return;
+    }
+    S.files.forEach((f, i) => {
+      const row = document.createElement('div');
+      row.className = 'frow' + (i === S.idx ? ' active' : '');
+      row.dataset.idx = String(i);
+
+      const g = document.createElement('span');
+      g.className = 'glyph';
+      g.textContent = STATUS_GLYPH[f.status] || '?';
+      g.title = STATUS_NAME[f.status] || f.status;
+
+      const p = document.createElement('span');
+      p.className = 'fpath';
+      p.textContent = f.path;
+      p.title = `${f.path}\n${STATUS_NAME[f.status] || f.status}` + (f.binary ? '\n（二进制）' : '');
+
+      const st = document.createElement('span');
+      st.className = 'fstats';
+      if (!f.binary) {
+        const a = document.createElement('span');
+        a.className = 'add-c';
+        a.textContent = `+${f.added}`;
+        const d2 = document.createElement('span');
+        d2.className = 'del-c';
+        d2.textContent = `−${f.deleted}`;
+        st.appendChild(a);
+        st.appendChild(document.createTextNode(' '));
+        st.appendChild(d2);
+      } else {
+        st.textContent = 'bin';
+        st.title = '二进制';
+      }
+      row.appendChild(g);
+      row.appendChild(p);
+      row.appendChild(st);
+      list.appendChild(row);
+    });
+  }
+
+  // ---------- 右侧 diff ----------
+  function curFile() { return S.files[S.idx]; }
+  function curFileHunks() { const f = curFile(); return f ? f.hunks : []; }
+
+  function renderDiff() {
+    const head = $('#diffhead');
+    const note = $('#diffnote');
+    const ph = $('#placeholder');
+    const body = $('#diffbody');
+    head.className = 'hidden';
+    head.textContent = '';
+    note.className = 'hidden';
+    note.textContent = '';
+    body.className = 'hidden';
+    body.textContent = '';
+    ph.classList.remove('hidden');
+    S.lastSel = null;        // diff DOM 重建，上次选区作废
+    refreshSelButton();      // 早期 return 的分支也要让按钮状态正确
+
+    const f = curFile();
+    if (!f) {
+      // 区分「宿主真的没下发数据」和「这个提交确实没改动」：前者是通信问题，别误导用户
+      if (!S.shortSha) {
+        ph.textContent = '还没有收到提交数据。\n\n（面板可能是刚从别的窗口搬过来，数据还没补发）' +
+          '\n按 Esc 关闭后重开一次；若总是这样，请看 输出 → Pretty Commit 的日志。';
+      } else if (S.hiddenUnchanged > 0) {
+        ph.textContent = `这个提交没有可显示的行级改动：${S.hiddenUnchanged} 个文件都是纯重命名/仅权限变更。` +
+          '\n\n（想看全部文件：把设置 prettyCommit.hideUnchangedFiles 关掉）';
+      } else {
+        ph.textContent = '这个提交没有可显示的文件改动。\n\n（常见：merge 提交无冲突合并 / 只改二进制 / 空提交）';
+      }
+      return;
+    }
+    if (!S.open) {
+      ph.textContent = `已折叠。\n\n按 Enter 或点击左侧文件，展开 ${f.path} 的 diff。`;
+      return;
+    }
+
+    ph.classList.add('hidden');
+    head.className = '';
+    head.textContent = f.path;
+    const statusSpan = document.createElement('span');
+    statusSpan.textContent = STATUS_NAME[f.status] || f.status;
+    head.appendChild(statusSpan);
+    if (!f.binary) {
+      const a = document.createElement('span');
+      a.className = 'add-c';
+      a.textContent = `+${f.added}`;
+      const d = document.createElement('span');
+      d.className = 'del-c';
+      d.textContent = `−${f.deleted}`;
+      head.append(document.createTextNode('  '), a, document.createTextNode(' '), d);
+    } else {
+      const b = document.createElement('span');
+      b.textContent = '[二进制]';
+      head.appendChild(b);
+    }
+
+    const hunks = f.hunks;
+    if (!hunks.length) {
+      body.className = '';
+      const n = document.createElement('div');
+      n.className = 'note';
+      n.textContent = f.binary
+        ? '二进制文件：无法直接显示 diff。'
+        : f.modeOnly ? '仅文件模式（权限）变更。' : '本次没有行级改动。';
+      body.appendChild(n);
+      return;
+    }
+
+    if (S.note) {
+      note.className = '';
+      note.textContent = S.note;
+    }
+
+    body.className = '';
+    let hIdx = 0;
+    for (const h of hunks) {
+      const hh = document.createElement('div');
+      hh.className = 'hh' + (hIdx === S.hunkIdx ? ' cur' : '');
+      hh.dataset.h = String(hIdx);
+      hh.textContent = h.header;
+      hh.title = '当前 hunk：无选区按 c 即发送它';
+      hh.addEventListener('click', () => { S.hunkIdx = hIdx; markCurHunk(); });
+      body.appendChild(hh);
+      for (const raw of h.lines) {
+        const line = document.createElement('div');
+        line.className = 'hl ' + (raw[0] === '+' ? 'add' : raw[0] === '-' ? 'del' : 'ctx');
+        line.dataset.h = String(hIdx);
+        line.textContent = raw;
+        body.appendChild(line);
+      }
+      hIdx++;
+    }
+    if (f.viewTrunc) {
+      const t = document.createElement('div');
+      t.className = 'note notrunc';
+      t.textContent = `… 该文件 diff 过长，右侧仅显示前若干 hunk（本 commit 内仍有更多改动）。`;
+      body.appendChild(t);
+    }
+    if (S.hunkIdx >= hIdx) S.hunkIdx = 0;
+    markCurHunk();
+    body.scrollTop = 0;
+    refreshSelButton();
+  }
+
+  function markCurHunk() {
+    const body = $('#diffbody');
+    for (const el of body.querySelectorAll('.hh')) {
+      el.classList.toggle('cur', el.dataset.h === String(S.hunkIdx));
+    }
+  }
+
+  function focusHunk(i) {
+    const el = $('#diffbody').querySelector(`.hh[data-h="${i}"]`);
+    if (el) el.scrollIntoView({ block: 'center' });
+  }
+
+  // ---------- 键盘 ----------
+  window.addEventListener('keydown', (e) => {
+    const mod = e.ctrlKey || e.metaKey || e.altKey;
+    if (e.key === 'Escape') {
+      vscode.postMessage({ type: 'close' });
+      e.preventDefault();
+      return;
+    }
+    // Ctrl/Cmd+L：对齐 Cursor 的「Add to Chat」——鼠标选好代码，一键加进 Chat
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'l' || e.key === 'L')) {
+      sendSelection();
+      e.preventDefault();
+      return;
+    }
+    // 输入框/按钮聚焦时别劫持字符键：Enter/Space 交给按钮默认点击
+    const tag = (e.target && e.target.tagName) || '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    if (tag === 'BUTTON' && (e.key === 'Enter' || e.key === ' ')) return;
+    if (mod && e.key !== 'A') return;
+    if (e.repeat && ['j','k','n','p','h','c'].includes(e.key)) return;
+
+    switch (e.key) {
+      case 'j': case 'ArrowDown':
+        if (S.files.length) { S.idx = Math.min(S.files.length - 1, S.idx + 1); S.hunkIdx = 0; renderList(); renderDiff(); renderHeader(); }
+        e.preventDefault(); break;
+      case 'k': case 'ArrowUp':
+        if (S.files.length) { S.idx = Math.max(0, S.idx - 1); S.hunkIdx = 0; renderList(); renderDiff(); renderHeader(); }
+        e.preventDefault(); break;
+      case 'Enter': case 'h':
+        S.open = !S.open;
+        renderDiff();
+        e.preventDefault(); break;
+      case 'n':
+        { const hs = curFileHunks(); if (S.open && hs.length) { S.hunkIdx = Math.min(hs.length - 1, S.hunkIdx + 1); markCurHunk(); focusHunk(S.hunkIdx); } }
+        e.preventDefault(); break;
+      case 'p':
+        { const hs = curFileHunks(); if (S.open && hs.length) { S.hunkIdx = Math.max(0, S.hunkIdx - 1); markCurHunk(); focusHunk(S.hunkIdx); } }
+        e.preventDefault(); break;
+      case 'c':
+        sendSelection();
+        e.preventDefault(); break;
+      case 'A':
+        if (e.shiftKey) { vscode.postMessage({ type: 'analyze' }); e.preventDefault(); }
+        break;
+      case 'F':
+        if (e.shiftKey) {
+          const f = curFile();
+          if (f) vscode.postMessage({ type: 'analyzeFile', path: f.path });
+          else toast('先选中一个文件');
+          e.preventDefault();
+        }
+        break;
+    }
+  });
+
+  // 当前要送 Chat 的内容：优先鼠标选区，其次缓存的最近选区，最后退回当前 hunk
+  function currentSelection() {
+    const f = curFile();
+    if (!f) return null;
+    const body = $('#diffbody');
+    const sel = window.getSelection();
+    let text = null;
+    if (sel && !sel.isCollapsed) text = selectedLines(sel, body, f);
+    // 点浮动按钮/按清单快捷键时选区可能已收起，用缓存的最近一次兜底
+    if (text == null && S.lastSel && S.lastSel.path === f.path) text = S.lastSel.text;
+    if (text == null) {
+      const hs = f.hunks;
+      const h = hs[Math.min(S.hunkIdx, hs.length - 1)];
+      if (!h) { toast('该文件没有 hunk 可发送'); return null; }
+      text = [h.header, ...h.lines].join('\n');
+    }
+    if (!text.trim()) return null;
+    return { path: f.path, text };
+  }
+
+  // ---------- 选区 / 当前 hunk 送 Chat ----------
+  function sendSelection() {
+    const s = currentSelection();
+    if (s) vscode.postMessage({ type: 'sendSel', path: s.path, text: s.text });
+  }
+
+  function isDiffEl(el) {
+    return el.classList && (el.classList.contains('hl') || el.classList.contains('hh'));
+  }
+
+  function lineElOf(node, root) {
+    let n = node;
+    while (n && n !== root) {
+      if (isDiffEl(n)) return n;
+      n = n.parentElement;
+    }
+    return null;
+  }
+
+  // 把 DOM 选区折算成“整行”的 diff 文本；若选区只覆盖行的一部分也发整行，
+  // 开头带上起始行所在 hunk 的 @@ 头，方便 Chat 理解上下文。
+  // 选区边界换算成 els 下标。注意跨行拖选时浏览器给的是「容器元素 + 子元素偏移」
+  // （startContainer 就是 #diffbody 本身），此时不能按文本节点找行，要用偏移量算。
+  function boundaryIndex(node, offset, root, els, isEnd) {
+    if (node === root) {
+      const kids = Array.prototype.slice.call(root.children);
+      if (!kids.length) return -1;
+      let ci = isEnd ? offset - 1 : offset;
+      if (ci < 0) ci = 0;
+      if (ci >= kids.length) ci = kids.length - 1;
+      if (!isDiffEl(kids[ci])) { // 落在「截断」提示等非 diff 子元素上：往选区内侧找最近的行
+        const step = isEnd ? -1 : 1;
+        for (let i = ci; i >= 0 && i < kids.length; i += step) {
+          if (isDiffEl(kids[i])) { ci = i; break; }
+        }
+      }
+      return els.indexOf(kids[ci]);
+    }
+    const el = lineElOf(node, root);
+    return el ? els.indexOf(el) : -1;
+  }
+
+  function selectedLines(sel, root) {
+    if (!sel.rangeCount) return null;
+    const els = [];
+    for (const child of root.children) if (isDiffEl(child)) els.push(child);
+    if (!els.length) return null;
+    const range = sel.getRangeAt(0);
+    let si = boundaryIndex(range.startContainer, range.startOffset, root, els, false);
+    let ei = boundaryIndex(range.endContainer, range.endOffset, root, els, true);
+    if (si < 0) si = 0;                       // 边界算不出来就取首/尾行，别整块丢弃
+    if (ei < 0) ei = els.length - 1;
+    if (si > ei) { const t = si; si = ei; ei = t; }
+
+    // 若第一行不是 hunk 头，把起始行所在 hunk 的 @@ 头补到最前
+    let headerText = null;
+    if (!els[si].classList.contains('hh')) {
+      const h = els[si].dataset.h;
+      for (let i = si - 1; i >= 0; i--) {
+        if (els[i].classList.contains('hh')) {
+          if (els[i].dataset.h === h) headerText = els[i].textContent;
+          break;
+        }
+      }
+    }
+    const lines = els.slice(si, ei + 1).map((x) => x.textContent);
+    if (headerText && !lines[0].startsWith('@@')) lines.unshift(headerText);
+    return lines.join('\n');
+  }
+
+  // ---------- 浮动「＋ 添加到 Chat」按钮 ----------
+  // 常显（有可发送内容时），有选区时高亮并显示行数 —— 避免「选区一松手按钮就没」的竞态。
+  const selAdd = $('#sel-add');
+  // 选区是否落在 diff 区里。跨行拖选时 anchorNode 就是 #diffbody 本身，所以要 || n === body
+  function selTouchesBody(sel, body) {
+    if (!sel || sel.isCollapsed || !sel.rangeCount) return false;
+    const n = sel.anchorNode || sel.focusNode;
+    if (!n) return false;
+    return n === body || body.contains(n);
+  }
+  function refreshSelButton() {
+    const f = curFile();
+    const body = $('#diffbody');
+    let selLines = null;
+    if (f && S.open && body) {
+      const sel = window.getSelection();
+      if (selTouchesBody(sel, body)) {
+        const t = selectedLines(sel, body, f);
+        if (t) {
+          selLines = t.split('\n').length;
+          S.lastSel = { path: f.path, text: t }; // 点按钮时选区会先收起，缓存一份
+        }
+      }
+    }
+    const canSend = !!(f && S.open && f.hunks.length);
+    selAdd.classList.toggle('show', canSend);
+    selAdd.classList.toggle('hot', selLines != null);
+    selAdd.textContent = selLines == null ? '＋ 添加到 Chat' : `＋ 添加到 Chat（${selLines} 行选区）`;
+  }
+  document.addEventListener('selectionchange', refreshSelButton);
+  document.addEventListener('mouseup', refreshSelButton);
+  selAdd.addEventListener('click', () => { sendSelection(); refreshSelButton(); });
+
+  // ---------- 控件 ----------
+  $('#btn-analyze').addEventListener('click', () => vscode.postMessage({ type: 'analyze' }));
+  $('#btn-analyze-file').addEventListener('click', () => {
+    const f = curFile();
+    if (!f) { toast('先选中一个文件'); return; }
+    vscode.postMessage({ type: 'analyzeFile', path: f.path });
+  });
+  $('#btn-close').addEventListener('click', () => vscode.postMessage({ type: 'close' }));
+
+  // 左列表：单击=选中并展开；再点同一文件=折叠
+  $('#list').addEventListener('click', (e) => {
+    const row = e.target.closest('.frow');
+    if (!row) return;
+    const i = Number(row.dataset.idx);
+    if (i === S.idx) { S.open = !S.open; renderList(); renderDiff(); renderHeader(); return; }
+    S.idx = i;
+    S.open = true;
+    S.hunkIdx = 0;
+    renderList();
+    renderDiff();
+    renderHeader();
+  });
+
+  // 点击 hunk 头：选中它（无选区 c 时发送这个 hunk）
+  // （在 renderDiff 里按行绑定，这里不再重复）
+
+  function showStatus(text, kind) {
+    const st = $('#status');
+    if (!text) { st.className = 'hidden'; st.textContent = ''; return; }
+    st.className = kind === 'error' ? 'error' : kind === 'ok' ? 'ok' : '';
+    st.textContent = text;
+  }
+
+  let toastTimer = null;
+  function toast(text) {
+    const t = $('#toast');
+    t.textContent = text;
+    t.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
+  }
+
+  renderHeader();
+  renderList();
+  renderDiff();
+})();
+</script>
+</body>
+</html>
