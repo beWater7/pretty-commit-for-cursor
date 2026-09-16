@@ -556,6 +556,8 @@
     diffBackground: null,
     chgIdx: -1,       // 当前改动点下标（-1 = 还没跳过；换文件时清掉）
     isWorking: false, // 工作区 diff：行号与磁盘文件一致；历史 commit 跳转可能对不齐
+    changeBlocksCache: null, // renderDiff 后缓存改动块，避免 ↑↓ 反复扫 DOM
+    chgMarkedEls: [],       // 当前高亮的改动行，markChange 只清这些而不 querySelectorAll
   };
 
   // ---------- 缩放 ----------
@@ -1172,8 +1174,11 @@
     ph.classList.remove('hidden');
     S.lastSel = null;        // diff DOM 重建，上次选区作废
     S.chgIdx = -1;           // DOM 重建，改动点下标作废
+    S.changeBlocksCache = null;
+    for (const el of S.chgMarkedEls) el.classList.remove('chg', 'flash');
+    S.chgMarkedEls = [];
     showStatus('');          // 换文件 / 重绘时清掉「改动 2/2 · …」这种过期提示
-    refreshSelButton();      // 早期 return 的分支也要让按钮状态正确
+    refreshSelButton(true);  // 早期 return 的分支也要让按钮状态正确
 
     const f = curFile();
     if (!f) {
@@ -1228,6 +1233,7 @@
 
     body.className = '';
     body.style.setProperty('--ln-digits', String(gutterDigits(hunks)));
+    const frag = document.createDocumentFragment();
     let hIdx = 0;
     for (const h of hunks) {
       const hh = document.createElement('div');
@@ -1235,8 +1241,7 @@
       hh.dataset.h = String(hIdx);
       hh.textContent = h.header;
       hh.title = '当前 hunk：无选区按 c 即发送它';
-      hh.addEventListener('click', () => { S.hunkIdx = hIdx; markCurHunk(); });
-      body.appendChild(hh);
+      frag.appendChild(hh);
       const { rows } = lineNumbers(h);
       for (const r of rows) {
         const line = document.createElement('div');
@@ -1275,7 +1280,7 @@
         line.appendChild(newLn);
         line.appendChild(sign);
         line.appendChild(code);
-        body.appendChild(line);
+        frag.appendChild(line);
       }
       hIdx++;
     }
@@ -1283,12 +1288,14 @@
       const t = document.createElement('div');
       t.className = 'note notrunc';
       t.textContent = `… 该文件 diff 过长，右侧仅显示前若干 hunk（本 commit 内仍有更多改动）。`;
-      body.appendChild(t);
+      frag.appendChild(t);
     }
+    body.appendChild(frag);
+    S.changeBlocksCache = null;
     if (S.hunkIdx >= hIdx) S.hunkIdx = 0;
     markCurHunk();
     body.scrollTop = 0;
-    refreshSelButton();
+    refreshSelButton(true);
   }
 
   function markCurHunk() {
@@ -1306,7 +1313,7 @@
     const body = $('#diffbody');
     const blocks = [];
     let cur = null;
-    for (const el of Array.from(body.children)) {
+    for (const el of body.children) {
       if (!el.classList.contains('hl')) { cur = null; continue; }  // hunk 头断开
       const k = el.classList.contains('add')
         ? 'add'
@@ -1335,6 +1342,12 @@
     return blocks;
   }
 
+  function getChangeBlocks() {
+    if (S.changeBlocksCache) return S.changeBlocksCache;
+    S.changeBlocksCache = changeBlocks();
+    return S.changeBlocksCache;
+  }
+
   // 已经用 ↑/↓ 跳过 → 用 S.chgIdx 接着走（否则短文件里所有块都在视口中线以上时，
   // 第一次「下一个」会直接跳到最后一块）。还没跳过 → 以视口顶部为锚。
   function curChangeIdx(blocks) {
@@ -1350,11 +1363,12 @@
   }
 
   function markChange(blocks, idx) {
-    const body = $('#diffbody');
-    for (const el of body.querySelectorAll('.hl.chg')) el.classList.remove('chg');
+    for (const el of S.chgMarkedEls) el.classList.remove('chg', 'flash');
+    S.chgMarkedEls = [];
     if (idx < 0 || idx >= blocks.length) { S.chgIdx = -1; return; }
     S.chgIdx = idx;
-    for (const el of blocks[idx].els) {
+    S.chgMarkedEls = blocks[idx].els.slice();
+    for (const el of S.chgMarkedEls) {
       el.classList.add('chg');
       el.classList.add('flash');   // 闪一下，好找
       setTimeout(() => el.classList.remove('flash'), 700);
@@ -1375,7 +1389,7 @@
       renderList();
       renderDiff();
       renderHeader();
-      const blocks = changeBlocks();
+      const blocks = getChangeBlocks();
       if (!blocks.length) continue;
       const target = dir > 0 ? 0 : blocks.length - 1;
       markChange(blocks, target);
@@ -1393,7 +1407,7 @@
       S.open = true;
       renderDiff();
     }
-    const blocks = changeBlocks();
+    const blocks = getChangeBlocks();
     if (!blocks.length) { stepFileForChange(dir); return; }   // 本文件没改动，直接翻文件
     const i = curChangeIdx(blocks);
     const next = dir > 0 ? i + 1 : i - 1;
@@ -1594,28 +1608,50 @@
     if (!n) return false;
     return n === body || body.contains(n);
   }
-  function refreshSelButton() {
+  let selBtnUi = { canSend: null, hot: null, text: '' };
+  let selRefreshTimer = null;
+
+  function refreshSelButton(immediate) {
+    if (immediate) {
+      clearTimeout(selRefreshTimer);
+      selRefreshTimer = null;
+      runRefreshSelButton();
+      return;
+    }
+    if (selRefreshTimer) return;
+    selRefreshTimer = setTimeout(() => {
+      selRefreshTimer = null;
+      runRefreshSelButton();
+    }, 80);
+  }
+
+  function runRefreshSelButton() {
     const f = curFile();
     const body = $('#diffbody');
     let selLines = null;
     if (f && S.open && body) {
       const sel = window.getSelection();
-      if (selTouchesBody(sel, body)) {
+      if (sel && !sel.isCollapsed && selTouchesBody(sel, body)) {
         const t = selectedLines(sel, body, f);
         if (t) {
           selLines = t.split('\n').length;
-          S.lastSel = { path: f.path, text: t }; // 点按钮时选区会先收起，缓存一份
+          S.lastSel = { path: f.path, text: t };
         }
       }
     }
     const canSend = !!(f && S.open && f.hunks.length);
+    const hot = selLines != null;
+    const text = hot ? `＋ 添加到 Chat（${selLines} 行选区）` : '＋ 添加到 Chat';
+    if (selBtnUi.canSend === canSend && selBtnUi.hot === hot && selBtnUi.text === text) return;
+    selBtnUi = { canSend, hot, text };
     selAdd.classList.toggle('show', canSend);
-    selAdd.classList.toggle('hot', selLines != null);
-    selAdd.textContent = selLines == null ? '＋ 添加到 Chat' : `＋ 添加到 Chat（${selLines} 行选区）`;
+    selAdd.classList.toggle('hot', hot);
+    selAdd.textContent = text;
   }
-  document.addEventListener('selectionchange', refreshSelButton);
-  document.addEventListener('mouseup', refreshSelButton);
-  selAdd.addEventListener('click', () => { sendSelection(); refreshSelButton(); });
+
+  document.addEventListener('selectionchange', () => refreshSelButton(false));
+  document.addEventListener('mouseup', () => refreshSelButton(true));
+  selAdd.addEventListener('click', () => { sendSelection(); refreshSelButton(true); });
 
   // ---------- 控件 ----------
   $('#btn-analyze').addEventListener('click', () => vscode.postMessage({ type: 'analyze' }));
@@ -1642,6 +1678,12 @@
   }, { passive: false });
 
   $('#diffbody').addEventListener('click', (e) => {
+    const hh = e.target.closest('.hh');
+    if (hh && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      S.hunkIdx = Number(hh.dataset.h) || 0;
+      markCurHunk();
+      return;
+    }
     const code = e.target.closest('.code');
     const line = e.target.closest('.hl');
     if (!code || !line) return;
@@ -1664,9 +1706,6 @@
     renderHeader();
   });
 
-  // 点击 hunk 头：选中它（无选区 c 时发送这个 hunk）
-  // （在 renderDiff 里按行绑定，这里不再重复）
-
   function showStatus(text, kind) {
     const st = $('#status');
     if (!text) { st.className = 'hidden'; st.textContent = ''; return; }
@@ -1688,7 +1727,11 @@
   renderDiff();
   applyZoom();   // 先把缩放/列表恢复成默认值，等 uiState 回来再覆盖
   applyList();
-  window.addEventListener('resize', applyListWidth);
+  let resizeListTimer = null;
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeListTimer);
+    resizeListTimer = setTimeout(applyListWidth, 100);
+  });
 })();
 </script>
 </body>
