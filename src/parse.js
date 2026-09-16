@@ -27,7 +27,10 @@ function parseHunks(bodyLines) {
       cur = { header: line, lines: [] };
       hunks.push(cur);
     } else if (cur) {
-      cur.lines.push(line);
+      // 丢掉空串：diff 文本末尾的换行会 split 出一个 ''，它会混进最后一个 hunk
+      // 变成一条"幽灵"上下文行（旧版只是显示成空白行，加了行号后会多出一个假行号）。
+      // 合法 diff 里空内容行一定写成单个空格 " "，所以 '' 只可能是这个尾巴。
+      if (line !== '') cur.lines.push(line);
     }
   }
   return hunks;

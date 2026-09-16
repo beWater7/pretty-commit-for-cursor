@@ -45,6 +45,44 @@
   #commit-sub { font-size: 11px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .spacer { flex: 1; }
   .ctrl { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; }
+  /* 顶栏里的分组分隔线（改动导航 / AI 分析是两件事） */
+  .ctrl .sep { width: 1px; align-self: stretch; margin: 0 2px; background: var(--border); }
+  /* 顶栏符号按钮（≡ / ↑↓ / P N / ±）：无边框，字号加大，和文字按钮区分开 */
+  .ctrl button.icon,
+  .ctrl button.icon.tool {
+    padding: 2px 6px;
+    font-family: var(--mono);
+    line-height: 1;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    color: var(--vscode-foreground, #e8e8e8);
+  }
+  .ctrl button.icon.tool {
+    font-size: 19px;
+    font-weight: 700;
+    min-width: 28px;
+  }
+  .ctrl button.icon.tool.file {
+    font-size: 15px;
+    letter-spacing: 0.02em;
+  }
+  .ctrl button.icon:hover:not(:disabled),
+  .ctrl button.icon.tool:hover:not(:disabled) {
+    background: rgba(127, 127, 127, 0.22);
+    color: var(--vscode-focusBorder, #007fd4);
+  }
+  .ctrl button.icon:disabled,
+  .ctrl button.icon.tool:disabled { opacity: 0.32; }
+  .nav-tools {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+  }
+  .nav-tools .nav-gap {
+    width: 10px;
+    flex: 0 0 10px;
+  }
   label.switch { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; }
   button {
     background: var(--vscode-button-secondaryBackground, #3a3d41);
@@ -103,14 +141,29 @@
   /* ---- 主体：左列表 + 右 diff ---- */
   main { flex: 1; display: flex; min-height: 0; }
   aside {
-    flex: 0 0 300px;
-    min-width: 180px;
+    /* 默认窄一些，把宽度让给 diff；宽度由拖动手柄改 flex-basis，不靠 CSS resize
+       （Webview 里 resize:horizontal 经常没有手柄、拖不动）。 */
+    flex: 0 0 260px;
+    min-width: 140px;
     max-width: 46%;
-    resize: horizontal;
     overflow-x: hidden;
     overflow-y: auto;
-    border-right: 1px solid var(--border);
   }
+  /* 左右分栏拖动手柄：5px 宽，hover / 拖动时高亮 */
+  .split {
+    flex: 0 0 5px;
+    cursor: col-resize;
+    background: var(--vscode-panel-border, #2b2b2b);
+    position: relative;
+    z-index: 3;
+  }
+  .split:hover, body.dragging-split .split {
+    background: var(--vscode-focusBorder, #007fd4);
+  }
+  body.dragging-split { cursor: col-resize; user-select: none; }
+  /* 收起文件列表：diff 独占整个宽度 */
+  body.list-collapsed aside,
+  body.list-collapsed .split { display: none; }
   #list { display: flex; flex-direction: column; }
   .frow {
     display: flex;
@@ -136,7 +189,35 @@
   .glyph { font-family: var(--mono); font-size: 11px; flex: 0 0 auto; }
   #listEmpty { padding: 10px; color: var(--dim); }
   /* ---- 右 diff 区 ---- */
-  section { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  /* diff 面固定用 Gerrit 观感：纯白底 + 不透明的浅绿/浅红整行色。
+     这里**重新声明**已有的语义变量名（--fg/--dim/--border/--add-bg…），
+     下面所有 var(--fg) 之类的引用在 section 内就自动取到浅色值，无需改选择器。
+     注意必须同时重设 color 本身：body 上的 color 是用深色主题的 --fg 算好的，
+     section 只改 --fg 不会改变它自己继承到的 color，深色主题下就成了浅灰字压白底。 */
+  section {
+    flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0;
+    --bg: #fff;
+    --fg: #24292f;             /* 正文近黑，白底上更易辨认 */
+    --dim: #6e7781;            /* 次级文字 / 占位提示 */
+    --border: #d8dee4;         /* 分隔线 */
+    --add-bg: #aceebb;         /* 新增行：比 Gerrit 原版 #ddffdd 更实，区别度更高 */
+    --del-bg: #ffc9c9;         /* 删除行 */
+    --add-gutter: #d7f2de;     /* add 行的行号列底色：比代码区浅，数字仍看得清 */
+    --del-gutter: #ffdede;     /* del 行的行号列底色 */
+    --hh-bg: #eef1f4;          /* hunk 头：中性浅灰，取代原来的蓝 */
+    --hh-fg: #57606a;
+    --lnx: #e3e6ea;            /* 行号列分隔线 */
+    --ln-fg: #6a737d;          /* 行号文字 */
+    --gutter-bg: #f6f8fa;      /* 行号列底色：比正文略暗，把 gutter 和代码分层 */
+    --chg: #0969da;            /* 「当前改动点」的左侧标记 */
+    --flash-bg: #ffec8b;       /* 跳到改动点闪高：#fff3b0 与 #ffe566 之间 */
+    --cmt: #6b8f6b;            /* 注释：灰绿、斜体，略淡于正文 */
+    background: var(--bg);
+    color: var(--fg);
+  }
+  /* 这两个类在深色壳（左列表）和白底（diff 头）里都用，所以只在 section 内换深色版 */
+  section .add-c { color: #1a7f37; }
+  section .del-c { color: #cf222e; }
   #diffhead {
     flex: 0 0 auto;
     padding: 6px 10px;
@@ -167,20 +248,91 @@
     position: relative;
     overflow-y: auto;
     overflow-x: auto;
-    font-family: var(--mono);
-    font-size: 12px;
+    font-family: var(--diff-font, var(--mono));
+    font-weight: var(--diff-weight, 500);
+    font-size: 13px;
     line-height: 1.5;
     padding: 4px 0;
+    tab-size: 4;               /* 制表符按 4 走；默认 8 在缩进深的代码里很散 */
+    /* 两列行号的宽度：按本文件最大行号位数算，renderDiff 里设 --ln-digits。
+       数字本身是 1ch，加上左右各 4px 内边距再留一点余量 —— 行号列要尽量窄，
+       宽度留给代码。 */
+    --sign-w: 14px;
+    /* 行号单独缩小字号，列宽按 digit 数收紧 */
+    --ln-w: calc(var(--ln-digits, 3) * 7px + 4px);
   }
-  .hl { white-space: pre; min-height: 1.5em; padding: 0 10px; user-select: text; }
+  /* 一行 = 旧行号 | 新行号 | 正文。
+     行号列用略暗的灰底（--gutter-bg），和正文分成两层；
+     add/del 行的行号列跟着染成更浅的绿/红（--add-gutter / --del-gutter），
+     整行看起来是一条连续色带，但数字比代码区底色浅、仍然看得清。
+     .hl 自己也要给不透明底色：行号列是 sticky 的，横向滚动时正文要从它底下滑过去。 */
+  .hl {
+    display: flex;
+    width: max-content;        /* 长行照旧横向滚动 */
+    min-width: 100%;
+    min-height: 1.5em;
+    background: #fff;
+    white-space: pre;
+    user-select: text;
+  }
   .hl.ctx { color: var(--fg); }
   .hl.add { background: var(--add-bg); }
   .hl.del { background: var(--del-bg); }
+  .hl.nonl { color: var(--dim); }        /* "\ No newline at end of file" */
+  .ln {
+    flex: 0 0 var(--ln-w);
+    padding: 0 2px 0 3px;
+    text-align: right;
+    color: var(--ln-fg);
+    background: var(--gutter-bg);
+    position: sticky;          /* 横向滚动时钉在左侧 */
+    user-select: none;         /* 拖选代码时别把行号带进选区 */
+    font-size: 10.5px;
+    line-height: 1.5em;
+    font-weight: 400;
+  }
+  /* add/del 行的行号列也跟着染色（比代码区浅），整行看起来是一条连续的色带 */
+  .hl.add .ln { background: var(--add-gutter); }
+  .hl.del .ln { background: var(--del-gutter); }
+  .ln-old { left: 0; border-right: 1px solid var(--lnx); }
+  .ln-new { left: var(--ln-w); border-right: 1px solid var(--lnx); }
+  /* +/- 单独一列：与代码区 visual 分隔，且不可选中（复制代码不会带上前缀） */
+  .sign {
+    flex: 0 0 var(--sign-w);
+    width: var(--sign-w);
+    text-align: center;
+    user-select: none;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.5em;
+    color: var(--ln-fg);
+    background: var(--gutter-bg);
+    position: sticky;
+    left: calc(var(--ln-w) * 2);
+    border-right: 1px solid var(--lnx);
+  }
+  .hl.add .sign { background: var(--add-gutter); }
+  .hl.del .sign { background: var(--del-gutter); }
+  .sign.add-mark { color: #1a7f37; }
+  .sign.del-mark { color: #cf222e; }
+  .code {
+    flex: 0 0 auto;
+    padding: 0 10px 0 8px;
+    cursor: text;
+    user-select: text;
+  }
+  .cmt { color: var(--cmt); font-style: italic; font-weight: 400; }
+  /* 当前改动点：代码区左边一条蓝色标记（inset shadow 不占布局，文字不会位移） */
+  .hl.chg .code { box-shadow: inset 4px 0 0 0 var(--chg); }
+  /* 刚跳过来时整块闪一下，位置好找；放在 .add/.del 之后才能盖住它们的底色 */
+  .hl.flash { background: var(--flash-bg); }
+  .hl.flash .ln { background: inherit; }
   .hh {
     background: var(--hh-bg);
     color: var(--hh-fg);
     font-weight: 600;
-    padding: 2px 10px;
+    /* 左边距跨过两列行号，让 @@ 与代码列对齐 */
+    padding: 2px 10px 2px calc(var(--ln-w, 48px) * 2 + var(--sign-w, 14px) + 6px);
     margin-top: 2px;
     cursor: pointer;
   }
@@ -209,13 +361,30 @@
     color: var(--dim);
     font-size: 11px;
     display: flex;
-    gap: 12px;
+    gap: 4px 12px;
     align-items: center;
-    white-space: nowrap;
-    overflow: hidden;
+    /* 允许折行：宁可多占一行，也不要把提示/控件裁掉（之前 nowrap+hidden 会直接切掉右半截） */
+    flex-wrap: wrap;
     background: var(--vscode-editorWidget-background, #252526);
   }
+  /* 顶栏里的缩放控件 */
+  .zoom { display: inline-flex; align-items: center; gap: 2px; }
+  .zoom button {
+    padding: 2px 6px; font-size: 18px; font-weight: 700; line-height: 1;
+    background: transparent; color: var(--vscode-foreground, #e8e8e8); border: none;
+  }
+  .zoom button:hover:not(:disabled) {
+    color: var(--vscode-focusBorder, #007fd4);
+    background: rgba(127, 127, 127, 0.22);
+  }
+  .zoom #zoom-info {
+    min-width: 40px; text-align: center; font-family: var(--mono); font-size: 11px;
+    cursor: pointer; color: var(--dim);
+  }
+  .zoom #zoom-info:hover { color: var(--fg); }
   ::selection { background: rgba(0,127,255,.35); }
+  /* 白底上的选区不能再用深蓝，会盖住整行 */
+  section ::selection { background: rgba(0,101,255,.20); }
   /* 通用隐藏：此前只有 #status.hidden 命中，导致 #placeholder / #diffbody 等
      切换 class="hidden" 时并没有真的隐藏，空占位块还占着高度 */
   .hidden { display: none !important; }
@@ -243,6 +412,21 @@
     </div>
     <div class="spacer"></div>
     <div class="ctrl">
+      <button id="btn-list" class="icon tool" title="收起/展开左侧文件列表（b）">≡</button>
+      <span class="nav-tools" title="改动 ↑↓ · 文件 P/N">
+        <button id="btn-prev-chg" class="icon tool" title="上一个改动（[）">↑</button>
+        <button id="btn-next-chg" class="icon tool" title="下一个改动（]）">↓</button>
+        <span class="nav-gap" aria-hidden="true"></span>
+        <button id="btn-prev-file" class="icon tool file" title="上一个文件（P / ←）">P</button>
+        <button id="btn-next-file" class="icon tool file" title="下一个文件（N / →）">N</button>
+      </span>
+      <span class="sep"></span>
+      <span class="zoom">
+        <button id="zoom-out" class="icon tool" title="缩小 diff 字号（-）">−</button>
+        <span id="zoom-info" title="点击复位为 100%（0）">100%</span>
+        <button id="zoom-in" class="icon tool" title="放大 diff 字号（+）；也可以按住 Ctrl 滚滚轮">＋</button>
+      </span>
+      <span class="sep"></span>
       <button id="btn-analyze-file" title="分析当前文件：改了什么、在整笔提交里起什么作用、有无风险（Shift+F）。代码量大时先提示">本文件分析</button>
       <button id="btn-analyze" class="primary" title="整笔 for-what / why（Shift+A）。代码量大时先提示">整笔分析</button>
       <button id="btn-close" title="关闭 (Esc)">关闭</button>
@@ -255,6 +439,7 @@
     <aside>
       <div id="list"></div>
     </aside>
+    <div id="split" class="split" title="拖动调节文件列表宽度"></div>
     <section>
       <div id="diffhead" class="hidden"></div>
       <div id="diffnote" class="hidden"></div>
@@ -264,13 +449,12 @@
   </main>
 
   <footer>
-    <span><kbd>j</kbd>/<kbd>k</kbd> 文件</span>
-    <span><kbd>Enter</kbd>/<kbd>h</kbd> 展开/折叠</span>
-    <span><kbd>n</kbd>/<kbd>p</kbd> 下一个/上一个 hunk</span>
-    <span><kbd>Ctrl</kbd>+<kbd>L</kbd> / <kbd>c</kbd> 选区加进 Chat</span>
+    <span><kbd>←</kbd>/<kbd>→</kbd> 或 <kbd>P</kbd>/<kbd>N</kbd> 文件</span>
+    <span><kbd>↑</kbd>/<kbd>↓</kbd> 或 <kbd>[</kbd>/<kbd>]</kbd> 改动</span>
+    <span><kbd>Ctrl</kbd>+点击 定义 · <kbd>Alt</kbd>+点击 引用</span>
     <span><kbd>Shift</kbd>+<kbd>A</kbd> 整笔分析</span>
     <span><kbd>Shift</kbd>+<kbd>F</kbd> 本文件分析</span>
-    <span><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>Q</kbd> 切回面板</span>
+    <span><kbd>b</kbd> 收起列表</span>
     <span><kbd>Esc</kbd> 关闭</span>
     <span style="margin-left:auto; opacity:.8" id="host-build"></span>
     <span id="ai-hint"></span>
@@ -343,6 +527,8 @@
     }
   }, 800);
   vscode.postMessage({ type: 'hostBuild' });
+  // 顺带取回上次的缩放档位和列表开关（旧宿主不认，静默无回应，用默认值）
+  vscode.postMessage({ type: 'getUiState' });
 
   const STATUS_GLYPH = { A: '+', M: '~', D: '−', R: '»', T: '!' };
   const STATUS_NAME = { A: '新增', M: '修改', D: '删除', R: '重命名', T: '类型变更' };
@@ -361,7 +547,156 @@
     subject: '',
     note: '',
     busy: false,
+    zoom: 0,          // 缩放档位（0 = 12px；正数放大）
+    listOpen: true,   // 左侧文件列表是否展开
+    listWidth: 220,   // 左侧文件列表宽度 px（拖动手柄改）
+    colorComments: true,
+    baseFontSize: 13, // 来自 prettyCommit.diffFontSize；± 缩放以此为基准
+    diffForeground: null,
+    diffBackground: null,
+    chgIdx: -1,       // 当前改动点下标（-1 = 还没跳过；换文件时清掉）
+    isWorking: false, // 工作区 diff：行号与磁盘文件一致；历史 commit 跳转可能对不齐
   };
+
+  // ---------- 缩放 ----------
+  // 只缩放 diff 区（行号列宽度用 1ch，会跟着字号一起变，所以 gutter 不会错位）。
+  // 档位存进宿主的 globalState，下次 Alt+Q 打开还是这个大小。
+  const ZOOM_STEP = 1.12;   // 每档 ×1.12
+  const ZOOM_MIN = -3;
+  const ZOOM_MAX = 10;
+
+  function baseFontSizePx() {
+    const b = Number(S.baseFontSize);
+    return Number.isFinite(b) ? Math.max(8, Math.min(28, Math.round(b))) : 13;
+  }
+
+  function applyZoom() {
+    const base = baseFontSizePx();
+    const fs = Math.max(7, Math.round(base * Math.pow(ZOOM_STEP, S.zoom)));
+    $('#diffbody').style.fontSize = fs + 'px';
+    const zi = $('#zoom-info');
+    if (zi) zi.textContent = Math.round((fs / base) * 100) + '%';
+  }
+
+  function applyDiffTheme() {
+    const sec = document.querySelector('section');
+    if (!sec) return;
+    if (S.diffForeground) {
+      sec.style.setProperty('--fg', S.diffForeground);
+      sec.style.color = S.diffForeground;
+    } else {
+      sec.style.removeProperty('--fg');
+      sec.style.removeProperty('color');
+    }
+    if (S.diffBackground) {
+      sec.style.setProperty('--bg', S.diffBackground);
+      sec.style.background = S.diffBackground;
+    } else {
+      sec.style.removeProperty('--bg');
+      sec.style.removeProperty('background');
+    }
+  }
+
+  function setZoom(delta) {
+    const next = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, S.zoom + delta));
+    if (next === S.zoom && delta !== 0) return;
+    S.zoom = next;
+    applyZoom();
+    saveUi();
+  }
+
+  // ---------- 左侧文件列表 收起/展开 ----------
+  function applyList() {
+    document.body.classList.toggle('list-collapsed', !S.listOpen);
+    const b = $('#btn-list');
+    if (b) b.title = (S.listOpen ? '收起' : '展开') + '左侧文件列表（b）';
+    applyListWidth();
+  }
+
+  function applyListWidth() {
+    const aside = document.querySelector('aside');
+    const main = document.querySelector('main');
+    if (!aside || !main) return;
+    const cap = Math.max(160, Math.floor(main.clientWidth * 0.46));
+    const w = Math.max(140, Math.min(S.listWidth || 220, cap));
+    S.listWidth = w;
+    aside.style.flexBasis = w + 'px';
+  }
+
+  function toggleList() {
+    S.listOpen = !S.listOpen;
+    applyList();
+    saveUi();
+  }
+
+  // 左右分栏拖动手柄。不用 CSS resize：Chromium webview 里 aside 的拖拽角经常不出现。
+  (function bindSplit() {
+    const handle = $('#split');
+    if (!handle) return;
+    handle.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || !S.listOpen) return;
+      e.preventDefault();
+      const aside = document.querySelector('aside');
+      const main = document.querySelector('main');
+      const startX = e.clientX;
+      const startW = aside.getBoundingClientRect().width;
+      document.body.classList.add('dragging-split');
+      try { handle.setPointerCapture(e.pointerId); } catch { /* 忽略 */ }
+      const move = (ev) => {
+        const cap = Math.max(160, Math.floor(main.clientWidth * 0.46));
+        S.listWidth = Math.max(140, Math.min(cap, Math.round(startW + (ev.clientX - startX))));
+        applyListWidth();
+      };
+      const up = () => {
+        document.body.classList.remove('dragging-split');
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+        saveUi();
+      };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+    });
+  })();
+
+  // ---------- 界面偏好落盘（缩放 / 列表开关） ----------
+  // 交给宿主的 globalState 存。旧宿主不认这两条消息，静默失败即可 —— 页面用默认值照常跑。
+  let uiSaveTimer = null;
+  function saveUi() {
+    clearTimeout(uiSaveTimer);
+    uiSaveTimer = setTimeout(() => {
+      try {
+        vscode.postMessage({ type: 'saveUiState', ui: { zoom: S.zoom, listOpen: S.listOpen, listWidth: S.listWidth } });
+      } catch { /* 忽略 */ }
+    }, 400);
+  }
+
+  function applyUi(ui) {
+    if (!ui || typeof ui !== 'object') return;
+    if (Number.isFinite(Number(ui.zoom))) { S.zoom = Number(ui.zoom); applyZoom(); }
+    if (typeof ui.listOpen === 'boolean') { S.listOpen = ui.listOpen; }
+    if (Number.isFinite(Number(ui.listWidth))) S.listWidth = Math.round(Number(ui.listWidth));
+    applyList();
+    const body = $('#diffbody');
+    if (typeof ui.fontFamily === 'string' && ui.fontFamily.trim() && body) {
+      body.style.fontFamily = ui.fontFamily;
+    }
+    if (Number.isFinite(Number(ui.fontWeight)) && body) {
+      body.style.fontWeight = String(ui.fontWeight);
+    }
+    if (Number.isFinite(Number(ui.baseFontSize))) {
+      S.baseFontSize = Math.max(8, Math.min(28, Math.round(Number(ui.baseFontSize))));
+      applyZoom();
+    }
+    const fgIn = ui.diffForeground;
+    S.diffForeground = typeof fgIn === 'string' && fgIn.trim() ? fgIn.trim() : null;
+    const bgIn = ui.diffBackground;
+    S.diffBackground = typeof bgIn === 'string' && bgIn.trim() ? bgIn.trim() : null;
+    applyDiffTheme();
+    const nextCmt = ui.colorComments !== false;
+    const cmtChanged = nextCmt !== S.colorComments;
+    S.colorComments = nextCmt;
+    if (cmtChanged && S.files.length) renderDiff();
+  }
 
   // ---------- 消息 ----------
   window.addEventListener('message', (ev) => {
@@ -395,6 +730,9 @@
           if (hb) hb.textContent = S.hostVersion ? `宿主 ${S.hostVersion}` : '宿主 旧版(未重载)';
         }
         renderDiag();
+        break;
+      case 'uiState': // 回应 getUiState：恢复上次的缩放与列表开关
+        applyUi(m.ui);
         break;
       case 'raise': // 宿主请求：把面板所在的 OS 窗口抬到前台
         raiseWindow(m.why);
@@ -457,6 +795,7 @@
     S.shortSha = c.shortSha || '';
     S.subject = c.subject || '';
     S.note = c.note || '';
+    S.isWorking = !!c.working || String(c.sha || '').startsWith(':working:');
     renderDiag();
     $('#commit-meta').textContent = `${S.shortSha}  ${S.subject}`;
     const sb = [];
@@ -466,6 +805,7 @@
     const total = c.totalFiles || all.length || shown;
     sb.push(shown === total ? `${shown} 个文件` : `${shown}/${total} 个文件`);
     if (S.hiddenUnchanged > 0) sb.push(`省略 ${S.hiddenUnchanged} 个无内容变化文件`);
+    if (c.note && String(c.note).trim()) sb.push(String(c.note).trim());
     $('#commit-sub').textContent = sb.join('   ·   ');
     showStatus('');
     renderHeader();
@@ -496,7 +836,29 @@
             : `分析 ${f.path}（Shift+F）；代码量大时先提示`;
 
     // 明确告诉用户：不会自动发送，点按钮才分析
-    $('#ai-hint').textContent = hasCommit ? `按需分析，不会自动发送 · 整笔 Δ=${S.delta}` : '';
+    $('#ai-hint').textContent = hasCommit ? `按需分析 · Δ=${S.delta}` : '';
+
+    const n = S.files.length;
+    $('#btn-prev-file').disabled = !hasCommit || n < 2 || S.idx <= 0;
+    $('#btn-next-file').disabled = !hasCommit || n < 2 || S.idx >= n - 1;
+    $('#btn-prev-chg').disabled = !hasCommit;
+    $('#btn-next-chg').disabled = !hasCommit;
+    $('#btn-list').disabled = false;
+  }
+
+  function stepFile(dir) {
+    if (!S.files.length) return;
+    const next = S.idx + dir;
+    if (next < 0 || next >= S.files.length) {
+      toast(dir > 0 ? '已经是最后一个文件' : '已经是第一个文件');
+      return;
+    }
+    S.idx = next;
+    S.hunkIdx = 0;
+    S.open = true;
+    renderList();
+    renderDiff();
+    renderHeader();
   }
 
   // ---------- 左列表 ----------
@@ -552,6 +914,250 @@
   function curFile() { return S.files[S.idx]; }
   function curFileHunks() { const f = curFile(); return f ? f.hunks : []; }
 
+  function lineKind(raw) {
+    const c = raw[0];
+    return c === '+' ? 'add' : c === '-' ? 'del' : c === '\\' ? 'nonl' : 'ctx';
+  }
+
+  // 从 hunk 头 `@@ -12,7 +12,9 @@` 的起点逐行推行号。
+  // 删除行只给旧行号、新增行只给新行号（Gerrit 靠这一点区分增删）；
+  // "\ No newline at end of file" 独立成行、不占号也不显示行号。
+  // 头不合常规就 has=false：整段不显示行号、正文保留原始前缀，不许猜。
+  function lineNumbers(h) {
+    const rows = [];
+    const m = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(h.header);
+    if (!m) {
+      for (const raw of h.lines) {
+        if (raw === '') continue;
+        rows.push({ raw, kind: lineKind(raw), old: '', new: '' });
+      }
+      return { has: false, rows };
+    }
+    let oldNo = Number(m[1]);
+    let newNo = Number(m[2]);
+    for (const raw of h.lines) {
+      // 空串是 diff 末尾换行 split 出来的尾巴（老版宿主会带下来）。跳过，
+      // 否则最后会多出一行"有行号但没内容"的幽灵行。
+      if (raw === '') continue;
+      const kind = lineKind(raw);
+      if (kind === 'nonl') rows.push({ raw, kind, old: '', new: '' });
+      else if (kind === 'add') rows.push({ raw, kind, old: '', new: String(newNo++) });
+      else if (kind === 'del') rows.push({ raw, kind, old: String(oldNo++), new: '' });
+      else rows.push({ raw, kind, old: String(oldNo++), new: String(newNo++) });
+    }
+    return { has: true, rows };
+  }
+
+  // 行号列宽度按「本文件出现过的最大行号位数」自适应，短文件列不会白白很宽
+  function gutterDigits(hunks) {
+    let max = 1;
+    for (const h of hunks) {
+      const m = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(h.header);
+      if (!m) continue;
+      max = Math.max(max, Number(m[1]) + Number(m[2] || 0), Number(m[3]) + Number(m[4] || 0));
+    }
+    return String(max).length;
+  }
+
+  // ---------- 注释着色（只区分注释 / 代码，不做完整语法高亮） ----------
+  // 白底上用灰绿斜体：比正文浅、又不跟新增的绿底抢；红底删除行上同样能认出来。
+  // 字符串里的 // 和 http:// 不当注释；跨 hunk 的块注释不跟踪（diff 会跳行，状态会错）。
+  function langStyle(path) {
+    const ext = String(path || '').split('.').pop().toLowerCase();
+    const hash = 'py sh bash zsh rb yml yaml toml r pl pm php cmake mk dockerfile gitignore editorconfig ini cfg';
+    const xml = 'html htm xml svg vue xhtml';
+    const sql = 'sql';
+    const lua = 'lua';
+    if ((' ' + hash + ' ').includes(' ' + ext + ' ') || ext === 'dockerfile') return 'hash';
+    if ((' ' + xml + ' ').includes(' ' + ext + ' ')) return 'xml';
+    if (ext === sql) return 'sql';
+    if (ext === lua) return 'lua';
+    return 'c';
+  }
+
+  function splitComments(s, style) {
+    const lineCmt = style === 'hash' ? '#' : (style === 'sql' || style === 'lua') ? '--' : style === 'xml' ? null : '//';
+    const block = style === 'hash' ? null : style === 'xml' ? ['<!--', '-->'] : ['/*', '*/'];
+    const out = [];
+    let i = 0;
+    let buf = '';
+    const flush = (cmt) => { if (buf) { out.push({ t: buf, cmt: !!cmt }); buf = ''; } };
+    const isLine = (mark, at) => {
+      if (!mark || !s.startsWith(mark, at)) return false;
+      if (at === 0) return true;
+      const prev = s[at - 1];
+      if (mark === '//') return prev !== ':';          // 放过 http://
+      if (mark === '#' || mark === '--') return /\s/.test(prev);
+      return true;
+    };
+    while (i < s.length) {
+      const q = s[i];
+      if (q === '"' || q === "'" || q === '`') {
+        let j = i + 1;
+        while (j < s.length) {
+          if (s[j] === '\\') { j += 2; continue; }
+          if (s[j] === q) { j++; break; }
+          j++;
+        }
+        buf += s.slice(i, j);
+        i = j;
+        continue;
+      }
+      if (isLine(lineCmt, i)) {
+        flush(false);
+        out.push({ t: s.slice(i), cmt: true });
+        return out;
+      }
+      if (block && s.startsWith(block[0], i)) {
+        const end = s.indexOf(block[1], i + block[0].length);
+        flush(false);
+        if (end < 0) {
+          out.push({ t: s.slice(i), cmt: true });
+          return out;
+        }
+        out.push({ t: s.slice(i, end + block[1].length), cmt: true });
+        i = end + block[1].length;
+        continue;
+      }
+      buf += s[i];
+      i++;
+    }
+    flush(false);
+    return out.length ? out : [{ t: s, cmt: false }];
+  }
+
+  function sourceBodyFromRaw(raw) {
+    if (raw == null || raw === '') return '';
+    if (raw[0] === '+' || raw[0] === '-' || raw[0] === ' ') return raw.slice(1);
+    return raw;
+  }
+
+  function identifierAtColumn(body, col) {
+    if (!body) return null;
+    col = Math.max(0, Math.min(body.length, col));
+    let s = col;
+    let e = col;
+    while (s > 0 && /[\w$]/.test(body[s - 1])) s--;
+    while (e < body.length && /[\w$]/.test(body[e])) e++;
+    if (s >= e) return null;
+    return { start: s, end: e, word: body.slice(s, e) };
+  }
+
+  function offsetInCodeEl(codeEl, range) {
+    const walker = document.createTreeWalker(codeEl, NodeFilter.SHOW_TEXT);
+    let off = 0;
+    let node;
+    const target = range.startContainer;
+    while ((node = walker.nextNode())) {
+      if (node === target) {
+        off += range.startOffset;
+        break;
+      }
+      off += node.textContent.length;
+    }
+    return Math.max(0, off);
+  }
+
+  function lineNumberForJump(lineEl) {
+    const del = lineEl.classList.contains('del');
+    const ln = del ? lineEl.dataset.lnOld : (lineEl.dataset.lnNew || lineEl.dataset.lnOld);
+    const n = parseInt(ln, 10);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }
+
+  function requestGoToSymbol(kind, lineEl, codeEl, clientX, clientY) {
+    const f = curFile();
+    if (!f || !lineEl || !codeEl) return;
+    const lineNo = lineNumberForJump(lineEl);
+    if (lineNo == null) {
+      toast('这一行没有可对齐的行号');
+      return;
+    }
+    const body = sourceBodyFromRaw(lineEl.dataset.raw || '');
+    const doc = codeEl.ownerDocument;
+    let col = 0;
+    if (doc.caretRangeFromPoint) {
+      const range = doc.caretRangeFromPoint(clientX, clientY);
+      if (range && codeEl.contains(range.startContainer)) col = offsetInCodeEl(codeEl, range);
+    }
+    const id = identifierAtColumn(body, col);
+    if (!id || id.word.length < 2) {
+      toast('请点在标识符（函数名/变量名）上');
+      return;
+    }
+    vscode.postMessage({
+      type: 'goToSymbol',
+      kind,
+      path: f.path,
+      line: lineNo,
+      character: id.start,
+      historical: !S.isWorking,
+    });
+  }
+
+  function goToFromSelection(kind) {
+    const f = curFile();
+    const body = $('#diffbody');
+    if (!f || !body) return;
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.rangeCount) {
+      toast('先选中 diff 里的标识符，或 Ctrl/Alt+点击');
+      return;
+    }
+    const range = sel.getRangeAt(0);
+    if (!body.contains(range.commonAncestorContainer)) return;
+    const line = range.startContainer.nodeType === Node.ELEMENT_NODE
+      ? range.startContainer.closest('.hl')
+      : range.startContainer.parentElement && range.startContainer.parentElement.closest('.hl');
+    const code = line && line.querySelector('.code');
+    if (!line || !code) return;
+    const lineNo = lineNumberForJump(line);
+    if (lineNo == null) return;
+    const srcBody = sourceBodyFromRaw(line.dataset.raw || '');
+    const col = offsetInCodeEl(code, range);
+    const id = identifierAtColumn(srcBody, col);
+    if (!id) {
+      toast('选中的不是标识符');
+      return;
+    }
+    vscode.postMessage({
+      type: 'goToSymbol',
+      kind,
+      path: f.path,
+      line: lineNo,
+      character: id.start,
+      historical: !S.isWorking,
+    });
+  }
+
+  function fillCode(el, raw, path) {
+    el.textContent = '';
+    if (raw == null || raw === '') return;
+    // "\ No newline at end of file"：整行当注释淡化即可
+    if (raw[0] === '\\') {
+      const s = document.createElement('span');
+      s.className = 'cmt';
+      s.textContent = raw;
+      el.appendChild(s);
+      return;
+    }
+    const body = sourceBodyFromRaw(raw);
+    if (!S.colorComments) {
+      el.appendChild(document.createTextNode(body));
+      return;
+    }
+    for (const p of splitComments(body, langStyle(path))) {
+      if (p.cmt) {
+        const s = document.createElement('span');
+        s.className = 'cmt';
+        s.textContent = p.t;
+        el.appendChild(s);
+      } else {
+        el.appendChild(document.createTextNode(p.t));
+      }
+    }
+  }
+
   function renderDiff() {
     const head = $('#diffhead');
     const note = $('#diffnote');
@@ -565,6 +1171,8 @@
     body.textContent = '';
     ph.classList.remove('hidden');
     S.lastSel = null;        // diff DOM 重建，上次选区作废
+    S.chgIdx = -1;           // DOM 重建，改动点下标作废
+    showStatus('');          // 换文件 / 重绘时清掉「改动 2/2 · …」这种过期提示
     refreshSelButton();      // 早期 return 的分支也要让按钮状态正确
 
     const f = curFile();
@@ -582,7 +1190,7 @@
       return;
     }
     if (!S.open) {
-      ph.textContent = `已折叠。\n\n按 Enter 或点击左侧文件，展开 ${f.path} 的 diff。`;
+        ph.textContent = `已折叠。\n\n点击左侧文件，展开 ${f.path} 的 diff。`;
       return;
     }
 
@@ -618,12 +1226,8 @@
       return;
     }
 
-    if (S.note) {
-      note.className = '';
-      note.textContent = S.note;
-    }
-
     body.className = '';
+    body.style.setProperty('--ln-digits', String(gutterDigits(hunks)));
     let hIdx = 0;
     for (const h of hunks) {
       const hh = document.createElement('div');
@@ -633,11 +1237,44 @@
       hh.title = '当前 hunk：无选区按 c 即发送它';
       hh.addEventListener('click', () => { S.hunkIdx = hIdx; markCurHunk(); });
       body.appendChild(hh);
-      for (const raw of h.lines) {
+      const { rows } = lineNumbers(h);
+      for (const r of rows) {
         const line = document.createElement('div');
-        line.className = 'hl ' + (raw[0] === '+' ? 'add' : raw[0] === '-' ? 'del' : 'ctx');
+        line.className = 'hl ' + r.kind;
         line.dataset.h = String(hIdx);
-        line.textContent = raw;
+        // 渲染时把原始行存一份：行首多了两列行号，textContent 会变成
+        // "7 8 const x = 1" 这种东西，送 Chat 必须用这份干净的原文（见 selectedLines）。
+        line.dataset.raw = r.raw;
+        if (r.old) line.dataset.lnOld = r.old;
+        if (r.new) line.dataset.lnNew = r.new;
+
+        const oldLn = document.createElement('span');
+        oldLn.className = 'ln ln-old';
+        oldLn.textContent = r.old;
+        const newLn = document.createElement('span');
+        newLn.className = 'ln ln-new';
+        newLn.textContent = r.new;
+        const sign = document.createElement('span');
+        sign.className = 'sign';
+        const rc = r.raw && r.raw.length ? r.raw[0] : ' ';
+        if (rc === '+') {
+          sign.textContent = '+';
+          sign.classList.add('add-mark');
+        } else if (rc === '-') {
+          sign.textContent = '−';
+          sign.classList.add('del-mark');
+        } else {
+          sign.textContent = '\u00a0';
+        }
+
+        const code = document.createElement('span');
+        code.className = 'code';
+        fillCode(code, r.raw, f.path);
+
+        line.appendChild(oldLn);
+        line.appendChild(newLn);
+        line.appendChild(sign);
+        line.appendChild(code);
         body.appendChild(line);
       }
       hIdx++;
@@ -661,6 +1298,113 @@
     }
   }
 
+  // ---------- 上下找改动点 ----------
+  // 「改动块」= 连续的新增/删除行。一次修改区通常渲染成 `-…` 紧跟 `+…`，
+  // 所以它们算同一个改动点；上下文行断开，hunk 头也断开。
+  // `\ No newline at end of file` 附着在前一个块里（它自己不成块）。
+  function changeBlocks() {
+    const body = $('#diffbody');
+    const blocks = [];
+    let cur = null;
+    for (const el of Array.from(body.children)) {
+      if (!el.classList.contains('hl')) { cur = null; continue; }  // hunk 头断开
+      const k = el.classList.contains('add')
+        ? 'add'
+        : el.classList.contains('del')
+          ? 'del'
+          : el.classList.contains('nonl')
+            ? 'nonl'
+            : 'ctx';
+      if (k === 'add' || k === 'del') {
+        if (cur) {
+          cur.end = el;
+          cur.els.push(el);
+        } else {
+          cur = { start: el, end: el, els: [el] };
+          blocks.push(cur);
+        }
+      } else if (k === 'nonl') {
+        if (cur) {
+          cur.end = el;
+          cur.els.push(el);
+        }
+      } else {
+        cur = null;
+      }
+    }
+    return blocks;
+  }
+
+  // 已经用 ↑/↓ 跳过 → 用 S.chgIdx 接着走（否则短文件里所有块都在视口中线以上时，
+  // 第一次「下一个」会直接跳到最后一块）。还没跳过 → 以视口顶部为锚。
+  function curChangeIdx(blocks) {
+    if (S.chgIdx >= 0 && S.chgIdx < blocks.length) return S.chgIdx;
+    const body = $('#diffbody');
+    const top = body.scrollTop + 4;
+    let idx = -1;
+    for (let i = 0; i < blocks.length; i++) {
+      if (blocks[i].start.offsetTop < top) idx = i;
+      else break;
+    }
+    return idx;
+  }
+
+  function markChange(blocks, idx) {
+    const body = $('#diffbody');
+    for (const el of body.querySelectorAll('.hl.chg')) el.classList.remove('chg');
+    if (idx < 0 || idx >= blocks.length) { S.chgIdx = -1; return; }
+    S.chgIdx = idx;
+    for (const el of blocks[idx].els) {
+      el.classList.add('chg');
+      el.classList.add('flash');   // 闪一下，好找
+      setTimeout(() => el.classList.remove('flash'), 700);
+    }
+  }
+
+  // 本文件没有可去的改动点了：翻到上一个/下一个有改动的文件
+  function stepFileForChange(dir) {
+    const n = S.files.length;
+    for (let step = 1; step <= n; step++) {
+      const i = S.idx + dir * step;
+      if (i < 0 || i >= n) break;                 // 到头就停，不绕回去
+      const f = S.files[i];
+      if (!f || f.binary || !f.hunks.length) continue;
+      S.idx = i;
+      S.hunkIdx = 0;
+      S.open = true;
+      renderList();
+      renderDiff();
+      renderHeader();
+      const blocks = changeBlocks();
+      if (!blocks.length) continue;
+      const target = dir > 0 ? 0 : blocks.length - 1;
+      markChange(blocks, target);
+      blocks[target].start.scrollIntoView({ block: 'center' });
+      showStatus(`改动 ${target + 1}/${blocks.length} · ${f.path}${dir > 0 ? '（下一个文件）' : '（上一个文件）'}`);
+      return;
+    }
+    toast(dir > 0 ? '没有更靠后的改动了' : '没有更靠前的改动了');
+    showStatus(dir > 0 ? '已经是最后一处改动' : '已经是第一处改动');
+  }
+
+  function gotoChange(dir) {
+    if (!S.shortSha || !S.files.length) return;
+    if (!S.open) {
+      S.open = true;
+      renderDiff();
+    }
+    const blocks = changeBlocks();
+    if (!blocks.length) { stepFileForChange(dir); return; }   // 本文件没改动，直接翻文件
+    const i = curChangeIdx(blocks);
+    const next = dir > 0 ? i + 1 : i - 1;
+    if (next >= blocks.length) { stepFileForChange(1); return; }
+    if (next < 0) { stepFileForChange(-1); return; }
+    markChange(blocks, next);
+    blocks[next].start.scrollIntoView({ block: 'center' });
+    const f = curFile();
+    showStatus(`改动 ${next + 1}/${blocks.length} · ${f ? f.path : ''}`);
+  }
+
   function focusHunk(i) {
     const el = $('#diffbody').querySelector(`.hh[data-h="${i}"]`);
     if (el) el.scrollIntoView({ block: 'center' });
@@ -680,29 +1424,55 @@
       e.preventDefault();
       return;
     }
+    // 缩放 diff。Ctrl+= / Ctrl+- 可能被工作台抢走（它自己也用来缩放界面），
+    // 所以另外给了不带修饰键的 + / - / 0，以及底栏那组按钮和 Ctrl+滚轮。
+    if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+      if (e.key === '=' || e.key === '+') { setZoom(1); e.preventDefault(); return; }
+      if (e.key === '-' || e.key === '_') { setZoom(-1); e.preventDefault(); return; }
+      if (e.key === '0') { setZoom(-S.zoom); e.preventDefault(); return; }
+    }
     // 输入框/按钮聚焦时别劫持字符键：Enter/Space 交给按钮默认点击
     const tag = (e.target && e.target.tagName) || '';
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
     if (tag === 'BUTTON' && (e.key === 'Enter' || e.key === ' ')) return;
+    if (e.key === 'F12') {
+      goToFromSelection(e.shiftKey ? 'reference' : 'definition');
+      e.preventDefault();
+      return;
+    }
     if (mod && e.key !== 'A') return;
-    if (e.repeat && ['j','k','n','p','h','c'].includes(e.key)) return;
+    if (e.repeat && ['n','p','N','P','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','c','b','[',']'].includes(e.key)) return;
 
     switch (e.key) {
-      case 'j': case 'ArrowDown':
-        if (S.files.length) { S.idx = Math.min(S.files.length - 1, S.idx + 1); S.hunkIdx = 0; renderList(); renderDiff(); renderHeader(); }
+      case 'ArrowRight': case 'n': case 'N':
+        stepFile(1);
         e.preventDefault(); break;
-      case 'k': case 'ArrowUp':
-        if (S.files.length) { S.idx = Math.max(0, S.idx - 1); S.hunkIdx = 0; renderList(); renderDiff(); renderHeader(); }
+      case 'ArrowLeft': case 'p': case 'P':
+        stepFile(-1);
         e.preventDefault(); break;
-      case 'Enter': case 'h':
-        S.open = !S.open;
-        renderDiff();
+      case 'ArrowDown':
+        gotoChange(1);
         e.preventDefault(); break;
-      case 'n':
-        { const hs = curFileHunks(); if (S.open && hs.length) { S.hunkIdx = Math.min(hs.length - 1, S.hunkIdx + 1); markCurHunk(); focusHunk(S.hunkIdx); } }
+      case 'ArrowUp':
+        gotoChange(-1);
         e.preventDefault(); break;
-      case 'p':
-        { const hs = curFileHunks(); if (S.open && hs.length) { S.hunkIdx = Math.max(0, S.hunkIdx - 1); markCurHunk(); focusHunk(S.hunkIdx); } }
+      case 'b':
+        toggleList();
+        e.preventDefault(); break;
+      case '[':
+        gotoChange(-1);
+        e.preventDefault(); break;
+      case ']':
+        gotoChange(1);
+        e.preventDefault(); break;
+      case '+': case '=':
+        setZoom(1);
+        e.preventDefault(); break;
+      case '-': case '_':
+        setZoom(-1);
+        e.preventDefault(); break;
+      case '0':
+        setZoom(-S.zoom);
         e.preventDefault(); break;
       case 'c':
         sendSelection();
@@ -806,7 +1576,10 @@
         }
       }
     }
-    const lines = els.slice(si, ei + 1).map((x) => x.textContent);
+    // 优先取渲染时存的原始行：行首多了两列行号，textContent 会拼成
+    // "7 8 +const x = 1" 这种东西，送 Chat 必须是合法 diff。
+    // .hh（hunk 头）没有 data-raw，自动走 textContent 兜底。
+    const lines = els.slice(si, ei + 1).map((x) => (x.dataset.raw != null ? x.dataset.raw : x.textContent));
     if (headerText && !lines[0].startsWith('@@')) lines.unshift(headerText);
     return lines.join('\n');
   }
@@ -852,6 +1625,30 @@
     vscode.postMessage({ type: 'analyzeFile', path: f.path });
   });
   $('#btn-close').addEventListener('click', () => vscode.postMessage({ type: 'close' }));
+  $('#btn-list').addEventListener('click', () => toggleList());
+  $('#btn-prev-file').addEventListener('click', () => stepFile(-1));
+  $('#btn-next-file').addEventListener('click', () => stepFile(1));
+  $('#btn-prev-chg').addEventListener('click', () => gotoChange(-1));
+  $('#btn-next-chg').addEventListener('click', () => gotoChange(1));
+  $('#zoom-in').addEventListener('click', () => setZoom(1));
+  $('#zoom-out').addEventListener('click', () => setZoom(-1));
+  $('#zoom-info').addEventListener('click', () => setZoom(-S.zoom));   // 点百分数复位
+
+  // Ctrl+滚轮缩放（滚轮不带 Ctrl 时照常滚动，不拦）
+  document.querySelector('section').addEventListener('wheel', (e) => {
+    if (!e.ctrlKey && !e.metaKey) return;
+    e.preventDefault();
+    setZoom(e.deltaY < 0 ? 1 : -1);
+  }, { passive: false });
+
+  $('#diffbody').addEventListener('click', (e) => {
+    const code = e.target.closest('.code');
+    const line = e.target.closest('.hl');
+    if (!code || !line) return;
+    if (!(e.ctrlKey || e.metaKey || e.altKey)) return;
+    e.preventDefault();
+    requestGoToSymbol(e.altKey ? 'reference' : 'definition', line, code, e.clientX, e.clientY);
+  });
 
   // 左列表：单击=选中并展开；再点同一文件=折叠
   $('#list').addEventListener('click', (e) => {
@@ -889,6 +1686,9 @@
   renderHeader();
   renderList();
   renderDiff();
+  applyZoom();   // 先把缩放/列表恢复成默认值，等 uiState 回来再覆盖
+  applyList();
+  window.addEventListener('resize', applyListWidth);
 })();
 </script>
 </body>

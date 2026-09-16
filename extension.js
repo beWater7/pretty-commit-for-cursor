@@ -73,6 +73,7 @@ function activate(ctx) {
   context.subscriptions.push(
     vscode.commands.registerCommand('prettyCommit.openHistoryItem', openFromArgs),
     vscode.commands.registerCommand('prettyCommit.openHead', () => openCommit('HEAD')),
+    vscode.commands.registerCommand('prettyCommit.openWorking', () => openWorking('all')),
     vscode.commands.registerCommand('prettyCommit.pickCommit', pickCommit),
     vscode.commands.registerCommand('prettyCommit.addSelection', addSelectionFromPanel),
     vscode.commands.registerCommand('prettyCommit.raisePanel', async () => {
@@ -95,6 +96,20 @@ function activate(ctx) {
     // 虚拟文档：送 Chat 的 diff 片段靠它变成「有名字、有行号」的代码上下文
     vscode.workspace.registerTextDocumentContentProvider(SCHEME, {
       provideTextDocumentContent: (uri) => virtualDocs.get(uri.toString()) || '',
+    }),
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (
+        !e.affectsConfiguration('prettyCommit.diffFontFamily') &&
+        !e.affectsConfiguration('prettyCommit.diffFontWeight') &&
+        !e.affectsConfiguration('prettyCommit.diffFontSize') &&
+        !e.affectsConfiguration('prettyCommit.diffForeground') &&
+        !e.affectsConfiguration('prettyCommit.diffBackground') &&
+        !e.affectsConfiguration('prettyCommit.colorComments') &&
+        !e.affectsConfiguration('editor.fontFamily')
+      ) {
+        return;
+      }
+      if (panelAlive(panel)) post(panel, { type: 'uiState', ui: readUiState() });
     }),
     log
   );
@@ -234,10 +249,42 @@ async function pickCommitInner() {
       return;
     }
     if (!list.length) {
-      vscode.window.showInformationMessage('这个仓库还没有提交。');
+      const picked = await vscode.window.showQuickPick(
+        [
+          { label: '$(diff) 工作区改动', description: ':working:all', detail: '仓库还没有 commit，将尝试 git diff --cached' },
+          { label: REBIND, description: '打开键盘快捷方式（已筛选 prettyCommit）' },
+        ],
+        { placeHolder: '这个仓库还没有提交，可以先看工作区 diff' }
+      );
+      if (!picked) return;
+      if (picked.label === REBIND) {
+        await openKeybindingEditor();
+        return;
+      }
+      await openWorking('all');
       return;
     }
-    const picks = list.map((c) => ({ label: `${c.short}  ${c.subject}`, description: c.sha }));
+    const WORK = [
+      {
+        label: '$(diff) 工作区改动',
+        description: ':working:all',
+        detail: 'git diff HEAD · 已暂存 + 未暂存，相对最后一次提交',
+      },
+      {
+        label: '$(diff) 仅暂存',
+        description: ':working:staged',
+        detail: 'git diff --cached',
+      },
+      {
+        label: '$(diff) 仅未暂存',
+        description: ':working:unstaged',
+        detail: 'git diff（不含已暂存）',
+      },
+    ];
+    const picks = [
+      ...WORK,
+      ...list.map((c) => ({ label: `${c.short}  ${c.subject}`, description: c.sha })),
+    ];
     if (list.length >= limit) {
       picks.push({
         label: MORE,
@@ -249,7 +296,7 @@ async function pickCommitInner() {
     picks.push({ label: REBIND, description: '打开键盘快捷方式（已筛选 prettyCommit）' });
 
     const picked = await vscode.window.showQuickPick(picks, {
-      placeHolder: `选择要查看的提交（最近 ${list.length} 条）`,
+      placeHolder: `工作区 diff 或最近 ${list.length} 条提交`,
     });
     if (!picked) return;
     if (picked.label === REBIND) {
@@ -259,6 +306,10 @@ async function pickCommitInner() {
     if (picked.description === MORE_ID) {
       limit = limit * 2;
       continue;
+    }
+    if (typeof picked.description === 'string' && picked.description.startsWith(':working:')) {
+      await openWorking(picked.description.slice(':working:'.length));
+      return;
     }
     const sel = list.find((c) => c.sha === picked.description);
     if (sel) await openCommit(sel.sha);
@@ -367,6 +418,34 @@ async function openCommit(rev) {
   }
 }
 
+async function openWorking(kind) {
+  const root = await pickRepoRoot('查看工作区');
+  if (!root) return;
+  const p = getPanel();
+  const gen = ++loadGen;
+  const label = kind === 'staged' ? '暂存区' : kind === 'unstaged' ? '未暂存' : '工作区';
+  loadingRev = `:working:${kind}`;
+  setStatus(p, `正在读取${label} diff…`, 'loading');
+  try {
+    const data = await git.loadWorkingDiff(root, kind);
+    if (gen !== loadGen || !panelAlive(p)) return;
+    loadingRev = null;
+    current = data;
+    currentRepoRoot = root;
+    requestRaise(p, 'open', true);
+    p.title = `${data.shortSha}  ${data.subject}`;
+    sendCommit(p, data, 'open');
+    logTabLayout('打开工作区 diff 后');
+    await expandPanelGroup(p, 'open');
+  } catch (err) {
+    if (gen === loadGen) loadingRev = null;
+    if (gen !== loadGen || !panelAlive(p)) return;
+    warn(`加载工作区失败: ${err.stack || err.message}`);
+    setStatus(p, `加载失败：${err.message}`, 'error');
+    vscode.window.showErrorMessage(`Pretty Commit: ${err.message}`);
+  }
+}
+
 // 统一的 commit 下发口：所有 commit 消息都必须带上 hostVersion，
 // 页面据此判断「宿主 JS 是旧版（改了代码没 Reload Window）」。
 function sendCommit(p, data, why) {
@@ -376,6 +455,72 @@ function sendCommit(p, data, why) {
     hostVersion: HOST_BUILD,
   });
   if (why === 'resync') info(`重新下发当前提交（${why}）: ${data.shortSha}`);
+}
+
+// ---------- 界面偏好（缩放档位 / 左侧列表开关） ----------
+// 放 globalState，跨窗口、跨次打开都还在。页面用 getUiState / saveUiState 两条消息读写；
+// 旧宿主不认这两条消息，页面退回默认值，不会报错。
+const UI_KEY = 'prettyCommit.uiState';
+const UI_DEFAULT = { zoom: 0, listOpen: true, listWidth: 260 };
+
+const FONT_STACKS = {
+  popular: '"JetBrains Mono", "Cascadia Code", "Fira Code", "Source Code Pro", ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, monospace',
+  jetbrains: '"JetBrains Mono", ui-monospace, Menlo, Consolas, monospace',
+  cascadia: '"Cascadia Code", "Cascadia Mono", ui-monospace, Consolas, monospace',
+  fira: '"Fira Code", ui-monospace, Menlo, Consolas, monospace',
+  ibm: '"IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace',
+  source: '"Source Code Pro", ui-monospace, Menlo, Consolas, monospace',
+};
+
+function resolvedDiffFont() {
+  const preset = String(vscode.workspace.getConfiguration('prettyCommit').get('diffFontFamily', 'popular') || 'popular');
+  if (preset === 'editor') {
+    const ed = vscode.workspace.getConfiguration('editor').get('fontFamily', '');
+    return ed && String(ed).trim() ? String(ed) : FONT_STACKS.popular;
+  }
+  return FONT_STACKS[preset] || preset;
+}
+
+function readUiState() {
+  let saved = null;
+  try {
+    saved = context ? context.globalState.get(UI_KEY) : null;
+  } catch {
+    saved = null;
+  }
+  const ui = { ...UI_DEFAULT, ...(saved && typeof saved === 'object' ? saved : {}) };
+  const cfg = vscode.workspace.getConfiguration('prettyCommit');
+  ui.fontFamily = resolvedDiffFont();
+  const w = Number(cfg.get('diffFontWeight', 500));
+  ui.fontWeight = w === 400 || w === 500 || w === 550 || w === 600 ? w : 500;
+  const fs = Number(cfg.get('diffFontSize', 13));
+  ui.baseFontSize = Number.isFinite(fs) ? Math.max(8, Math.min(28, Math.round(fs))) : 12;
+  const fg = String(cfg.get('diffForeground', '') || '').trim();
+  const bg = String(cfg.get('diffBackground', '') || '').trim();
+  ui.diffForeground = fg || null;
+  ui.diffBackground = bg || null;
+  ui.colorComments = cfg.get('colorComments', true) !== false;
+  return ui;
+}
+
+async function saveUiState(patch) {
+  const next = readUiState();
+  if (patch && typeof patch === 'object') {
+    if (Number.isFinite(Number(patch.zoom))) {
+      next.zoom = Math.max(-3, Math.min(10, Math.round(Number(patch.zoom))));
+    }
+    if (typeof patch.listOpen === 'boolean') next.listOpen = patch.listOpen;
+    if (Number.isFinite(Number(patch.listWidth))) {
+      next.listWidth = Math.max(140, Math.min(800, Math.round(Number(patch.listWidth))));
+    }
+  }
+  const persist = { zoom: next.zoom, listOpen: next.listOpen, listWidth: next.listWidth };
+  try {
+    await context.globalState.update(UI_KEY, persist);
+  } catch {
+    /* 存不下就算了，下次用默认值 */
+  }
+  return next;
 }
 
 // 把「当前应该在页面上的东西」重新下发一次。
@@ -435,6 +580,7 @@ function toViewModel(d) {
     sha: d.sha,
     shortSha: d.shortSha,
     subject: d.subject,
+    working: !!d.working,
     note: d.note || '',
     delta: d.delta,
     adds: d.adds,
@@ -1050,6 +1196,12 @@ async function onMessage(msg) {
     case 'hostBuild': // 页面问宿主版本
       post(p, { type: 'hostBuild', hostVersion: HOST_BUILD });
       break;
+    case 'getUiState': // 页面要上次的缩放/列表开关
+      post(p, { type: 'uiState', ui: readUiState() });
+      break;
+    case 'saveUiState': // 页面存缩放/列表开关（已防抖）
+      await saveUiState(msg.ui);
+      break;
     case 'analyze':
       await requestWhole();
       break;
@@ -1061,6 +1213,9 @@ async function onMessage(msg) {
       break;
     case 'selection': // webview 回报当前选区（回应 wantSelection）
       if (selWaiter) selWaiter.deliver({ path: msg.path, text: msg.text });
+      break;
+    case 'goToSymbol':
+      await handleGoToSymbol(msg);
       break;
     case 'raised': // webview 已执行 window.focus()（只证明代码跑了；visibility/focused 才是证据）
       info(
@@ -1106,6 +1261,60 @@ function requestSelection(p, timeout) {
       finish(null);
     }
   });
+}
+
+// diff 面板里 Ctrl/Alt+点击符号：走工作区真实文件 + 语言服务的定义/引用（clangd、TS 等）。
+// 限制：行号按 diff 的新/旧侧映射到**当前磁盘文件**，看历史 commit 时可能与当时版本不一致。
+async function handleGoToSymbol(msg) {
+  if (!currentRepoRoot) {
+    vscode.window.showWarningMessage('Pretty Commit：未记录仓库根目录，无法跳转。');
+    return;
+  }
+  const rel = String(msg.path || '').replace(/\\/g, '/');
+  if (!rel) return;
+  const full = path.join(currentRepoRoot, rel);
+  if (!fs.existsSync(full)) {
+    vscode.window.showWarningMessage(`Pretty Commit：工作区里没有 ${rel}`);
+    return;
+  }
+  const uri = vscode.Uri.file(full);
+  const line = Math.max(1, Number(msg.line) || 1);
+  const character = Math.max(0, Number(msg.character) || 0);
+  const pos = new vscode.Position(line - 1, character);
+  const isRef = msg.kind === 'reference';
+  const cmd = isRef ? 'vscode.executeReferenceProvider' : 'vscode.executeDefinitionProvider';
+  let locs;
+  try {
+    locs = await vscode.commands.executeCommand(cmd, uri, pos);
+  } catch (e) {
+    vscode.window.showWarningMessage(
+      `Pretty Commit：${isRef ? '查找引用' : '跳转定义'}失败（${e.message}）`
+    );
+    return;
+  }
+  if (!locs || (Array.isArray(locs) && !locs.length)) {
+    vscode.window.showInformationMessage(
+      `Pretty Commit：没有${isRef ? '引用' : '定义'}结果（请确认已安装并启用对应语言扩展 / clangd）。`
+    );
+    return;
+  }
+  const list = Array.isArray(locs) ? locs : [locs];
+  if (msg.historical) {
+    info(`goToSymbol ${isRef ? 'ref' : 'def'} ${rel}:${line}:${character}（diff 行号对应当前工作区，未必与 commit 一致）`);
+  }
+  if (isRef) {
+    await vscode.commands.executeCommand('editor.action.showReferences', uri, pos, list);
+    return;
+  }
+  const loc = list[0];
+  try {
+    await vscode.window.showTextDocument(loc.uri, {
+      preview: false,
+      selection: new vscode.Range(loc.range.start, loc.range.start),
+    });
+  } catch (e) {
+    vscode.window.showWarningMessage(`Pretty Commit：打开定义位置失败（${e.message}）`);
+  }
 }
 
 async function addSelectionFromPanel() {

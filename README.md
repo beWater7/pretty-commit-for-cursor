@@ -64,20 +64,61 @@ r.kind === 2 && r.commandId && this._skipTerminalCommands.includes(r.commandId)
 
 ## 窗口内操作
 
-标题栏：短 SHA + subject + `Δ=N`；右侧 `本文件分析`、`整笔分析`、`关闭`。**没有开关、也不自动发送** —— 点按钮或按快捷键才分析。
+标题栏：短 SHA + subject + `Δ=N`；右侧 `≡` 收起列表、`↑`/`↓` 上下改动、`P`/`N` 翻文件、缩放、`本文件分析`、`整笔分析`、`关闭`。**没有开关、也不自动发送** —— 点按钮或按快捷键才分析。
 
+```markdown
 | 按键 | 作用 |
 | --- | --- |
-| `j` / `k` | 上一个 / 下一个文件 |
-| `Enter` / `h` | 展开 / 折叠当前文件 diff |
-| `n` / `p` | 下一个 / 上一个 hunk |
-| `Ctrl+L`（或 `c`、或右下角「＋ 添加到 Chat」按钮） | 把框选的行加进 Chat；**无选区则送当前 hunk** |
-| `Shift+A` | 整笔 commit 分析（for what / why） |
-| `Shift+F` | 单文件分析（当前选中的那个文件） |
-| `Alt+Shift+Q` | **把面板叫回前台**（被 Chat 或别的标签页盖住时用） |
+| `←` / `→` 或 `P` / `N` | 上一个 / 下一个文件 |
+| `↑` / `↓` 或 `[` / `]`（顶栏 **↑↓**） | 上一个 / 下一个**改动块**；本文件走完自动进相邻文件 |
+| `b`（标题栏 ≡） | 收起 / 展开左侧文件列表 |
+| `+` / `-` / `0`（标题栏缩放、Ctrl+滚轮） | 放大 / 缩小 / 复位 diff 字号 |
+| `Ctrl+L` / `c` / 右下角「＋ 添加到 Chat」 | 把选区加进 Chat（无选区则送当前 hunk）。底栏不再提示这条，避免占位 |
+| `Shift+A` | 整笔分析 |
+| `Shift+F` | 本文件分析 |
 | `Esc` | 关闭 |
+```
 
-每次按 `Alt+Q` 打开提交都会重新把面板展开到占满编辑区（见下面「占满编辑区」一节）；送 Chat 时会自动恢复等宽分屏，好让 diff 和 AI 回答同屏。
+`Alt+Q` 列表**最上面**三项是工作区 diff（`git diff HEAD` / `--cached` / 未暂存），下面才是最近提交。命令面板另有 `Pretty Commit: 查看工作区改动（git diff）`。
+
+每次按 `Alt+Q` 打开都会把面板展开到占满编辑区（见「占满编辑区」）；送 Chat 时会自动恢复等宽分屏。缩放档位、列表宽度和是否收起记在 `globalState` 里。
+
+## diff 视图：Gerrit 风格
+
+右侧 diff 区是**固定浅色**的 —— 白底、不透明的浅绿新增行、浅红删除行、旧/新两列行号，跟 VS Code 主题无关（顶栏、左侧文件列表、底栏仍然跟随主题）。这是照 Gerrit 的 diff 观感做的，代价是深色主题下那块会偏亮。
+
+```markdown
+| 元素 | 含义 |
+| --- | --- |
+| 左列行号 | 旧文件行号；**新增行没有它** |
+| 右列行号 | 新文件行号；**删除行没有它** |
+| `#f6f8fa` 行号列底色 | 上下文行的 gutter；比正文略暗 |
+| `#aceebb` / `#d7f2de` | 新增：代码区 / 行号列（行号列更浅，数字仍看得清） |
+| `#ffc9c9` / `#ffdede` | 删除：代码区 / 行号列 |
+| 代码区左边蓝条 | 当前用 ↑/↓ 定位到的那个改动块 |
+| 灰底 `@@ … @@` | hunk 头，左边距对齐到代码列 |
+| 暗色 `\ No newline at end of file` | 不占行号 |
+```
+
+细节：
+
+- 正文**保留 `+` / `-` 前缀**（上下文行是一个空格，与 git 输出一致）—— 底色负责一眼看出增删，前缀负责逐行确认。
+- 行号从 hunk 头的 `@@ -a,b +c,d @@` 逐行推出来，每个 hunk 各自重新起算；列宽按本文件最大行号位数自适应（`--ln-w: Nch + 9px`），短文件不会白白很宽。
+- 左侧文件列表默认 220px，**中间那条竖线可以拖**（宽度会记住）；`b` 可以整个收起。
+- 代码默认 **Semibold（600）**、近黑 `#0b0d10`；行号保持 Regular。字体默认走主流等宽栈（JetBrains Mono → Cascadia Code → Fira Code → Source Code Pro → 系统等宽），可在设置里改：
+  - `prettyCommit.diffFontFamily`：`popular`（默认）/ `editor`（跟编辑器走）/ `jetbrains` / `cascadia` / `fira` / `ibm` / `source`
+  - `prettyCommit.diffFontWeight`：默认 `500`；可选 `400` / `550` / `600`
+  - `prettyCommit.diffFontSize`：diff 基础字号 px（默认 `13`）；顶栏 ± 是在此基础上缩放
+  - `prettyCommit.diffForeground` / `prettyCommit.diffBackground`：正文色 / 区背景（留空用内置 `#24292f` / `#fff`）
+- diff 区 **Ctrl+点击** 跳转定义、**Alt+点击** 查找引用（**F12** / **Shift+F12** 需先选中标识符）：走工作区真实文件 + 已安装的语言服务（clangd、TS 等）。**工作区 diff** 行号与磁盘一致；**历史 commit** 按 diff 行号对应当前文件，可能与当时版本不一致。
+- 注释（`//` `#` `/* */` `<!-- -->` `--`）渲染成**灰绿斜体**，和正文深色分开；字符串里的 `http://` 不会被当成注释。关掉：`prettyCommit.colorComments`。
+- 字符较长需要横向滚动时，两列行号**钉在左侧不动**（`position: sticky`），且不会把行号拖进选区（`user-select: none`）。
+- 想换配色：`media/panel.html` 里 `section` 那组变量（`--add-bg` / `--del-bg` / `--add-gutter` / `--del-gutter` / `--hh-bg` / `--gutter-bg` / `--ln-fg` …）。改这些不用重新打包，重开面板即可。
+- 改配色前可以先看渲染效果，不用反复重开 VS Code：`node assets/pc-render.js` 会拿**真实的 `media/panel.html`**灌一份合成 diff（新增/删除/多 hunk/无换行结尾都有），把页面写到 `$TMPDIR/pcview-out/`，用浏览器打开或交给无头 Chrome 截图即可。`node assets/pc-lineno-test.js` 是行号逻辑的自检。
+
+**注意**：`Ctrl+L` 送进 Chat 的是**带前缀、不含行号的合法 unified diff**（含行首的 `@@` 头）—— 行首多了两列行号之后，直接取 DOM 的 `textContent` 会得到 `"7 8 +const x = 1"` 这种垃圾，所以渲染时把原始行存在 `data-raw` 里，`selectedLines()` 优先取它。
+
+缩放和「收起列表」走宿主的 `getUiState` / `saveUiState`（`globalState`）。**改了 `extension.js` 必须 Reload Window** 这两条消息才会生效；只改 `panel.html` 重开面板即可。旧宿主不认这两条消息时，缩放和列表开关仍能用，只是下次打开不记得。
 
 ## 选区怎么进 Chat
 
@@ -347,7 +388,7 @@ const o = this.groupViews.size > 1 && this.isGroupExpanded(i);
 
 1. SCM 历史右键（或命令面板）能打开大窗口并显示文件列表 + diff。
 2. 默认**不弹独立窗口**：面板嵌在同一个窗口里、单独占一栏（左代码 / 右 diff），原编辑器仍在。
-3. `j/k/Enter` 切文件、折叠；拖选若干行按 `Ctrl+L`（或右下角按钮）能把代码加进 Chat 上下文。
+3. `P/N` 或 `↑/↓` 切文件；拖选若干行按 `Ctrl+L`（或右下角按钮）能把代码加进 Chat 上下文。
 4. 有选区时右下角按钮显示「（N 行选区）」并高亮；无选区时按 `Ctrl+L` 送当前 hunk。
 5. 标题栏有「整笔分析」「本文件分析」两个按钮，**没有开关**；打开窗口不自动分析、不自动发送。
 6. 按 `Shift+A` 整笔分析：Δ 小时直接在 Chat 里生成「短提问 + diff 芯片」（输入框是提问，芯片在输入框上方）；Δ 超过 `wholePromptDelta` 时先弹「代码量较大」确认，取消则不送。

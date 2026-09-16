@@ -107,4 +107,63 @@ async function loadCommit(repoRoot, rev) {
   return { ...meta, files, note, adds, dels, delta: adds + dels };
 }
 
-module.exports = { findRepoRoot, resolveSha, loadCommit, listRecent };
+function tally(files) {
+  let adds = 0;
+  let dels = 0;
+  for (const f of files) {
+    adds += f.added;
+    dels += f.deleted;
+  }
+  return { adds, dels, delta: adds + dels };
+}
+
+// 工作区 diff（不是某笔 commit）：
+//   all      = git diff HEAD     （已暂存 + 未暂存，相对最后一次提交）
+//   staged   = git diff --cached
+//   unstaged = git diff
+// 未跟踪文件 git diff 本来就不包含，note 里会提一句。
+async function loadWorkingDiff(repoRoot, kind) {
+  let hasHead = true;
+  try {
+    await resolveSha(repoRoot, 'HEAD');
+  } catch {
+    hasHead = false;
+  }
+
+  let useKind = kind === 'staged' || kind === 'unstaged' ? kind : 'all';
+  if (!hasHead) useKind = 'staged';
+
+  const args =
+    useKind === 'staged'
+      ? ['diff', '--cached', '--no-color', '--unified=3']
+      : useKind === 'unstaged'
+        ? ['diff', '--no-color', '--unified=3']
+        : ['diff', 'HEAD', '--no-color', '--unified=3'];
+
+  const diffText = await runGit(repoRoot, ['-c', 'diff.renames=true', ...args]);
+  const files = parseCommitDiff(diffText);
+  const { adds, dels, delta } = tally(files);
+
+  const titles = {
+    all: '未提交改动（相对 HEAD）',
+    staged: '已暂存改动',
+    unstaged: '未暂存改动',
+  };
+  return {
+    sha: `:working:${useKind}`,
+    shortSha: useKind === 'staged' ? 'staged' : useKind === 'unstaged' ? 'unstaged' : 'WT',
+    parents: [],
+    author: { name: '', email: '', date: '' },
+    committer: { name: '', email: '', date: '' },
+    subject: titles[useKind],
+    message: titles[useKind],
+    files,
+    note: '',
+    adds,
+    dels,
+    delta,
+    working: true,
+  };
+}
+
+module.exports = { findRepoRoot, resolveSha, loadCommit, loadWorkingDiff, listRecent };

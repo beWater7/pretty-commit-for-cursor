@@ -37,6 +37,10 @@
         "title": "Pretty Commit: Open HEAD（最近提交）"
       },
       {
+        "command": "prettyCommit.openWorking",
+        "title": "Pretty Commit: 查看工作区改动（git diff）"
+      },
+      {
         "command": "prettyCommit.pickCommit",
         "title": "Pretty Commit: 打开提交…"
       },
@@ -44,19 +48,19 @@
         "command": "prettyCommit.addSelection",
         "title": "Pretty Commit: 把选中的 diff 加进 Chat"
       },
-    {
-      "command": "prettyCommit.raisePanel",
-      "title": "Pretty Commit: 把面板窗口带到前台"
-    },
-    {
-      "command": "prettyCommit.rebind",
-      "title": "Pretty Commit: 修改快捷键…"
-    },
-    {
-      "command": "prettyCommit.enableInTerminal",
-      "title": "Pretty Commit: 让快捷键在终端里也生效"
-    }
-  ],
+      {
+        "command": "prettyCommit.raisePanel",
+        "title": "Pretty Commit: 把面板窗口带到前台"
+      },
+      {
+        "command": "prettyCommit.rebind",
+        "title": "Pretty Commit: 修改快捷键…"
+      },
+      {
+        "command": "prettyCommit.enableInTerminal",
+        "title": "Pretty Commit: 让快捷键在终端里也生效"
+      }
+    ],
     "menus": {
       "scm/historyItem/context": [
         {
@@ -73,20 +77,20 @@
       ]
     },
     "keybindings": [
-    {
-      "command": "prettyCommit.pickCommit",
-      "key": "alt+q"
-    },
-    {
-      "command": "prettyCommit.addSelection",
-      "key": "ctrl+l",
-      "when": "activeWebviewPanelId == prettyCommit"
-    },
-    {
-      "command": "prettyCommit.raisePanel",
-      "key": "alt+shift+q"
-    }
-  ],
+      {
+        "command": "prettyCommit.pickCommit",
+        "key": "alt+q"
+      },
+      {
+        "command": "prettyCommit.addSelection",
+        "key": "ctrl+l",
+        "when": "activeWebviewPanelId == prettyCommit"
+      },
+      {
+        "command": "prettyCommit.raisePanel",
+        "key": "alt+shift+q"
+      }
+    ],
     "configuration": {
       "title": "Pretty Commit",
       "properties": {
@@ -152,6 +156,68 @@
           "type": "boolean",
           "default": true,
           "description": "**仅在 moveToNewWindow=true（面板弹成独立窗口）时有意义**：送 Chat 后把面板窗口再抬回前台（走 X11 置前），代价是 Chat 窗口退到后面、需要点一下才能打字。嵌入模式（默认）下本项不生效 —— 同一个窗口里没有「被压到后面」的问题，抢焦点只会妨碍往 Chat 输入框打字。"
+        },
+        "prettyCommit.diffFontFamily": {
+          "type": "string",
+          "enum": [
+            "popular",
+            "editor",
+            "jetbrains",
+            "cascadia",
+            "fira",
+            "ibm",
+            "source"
+          ],
+          "enumDescriptions": [
+            "主流等宽栈：JetBrains Mono → Cascadia Code → Fira Code → Source Code Pro → 系统等宽（推荐；本机没装会自动往后掉）",
+            "跟随 VS Code / Cursor 的 editor.fontFamily",
+            "JetBrains Mono",
+            "Cascadia Code",
+            "Fira Code",
+            "IBM Plex Mono",
+            "Source Code Pro"
+          ],
+          "default": "popular",
+          "description": "右侧 diff 代码字体。也可以改成任意 CSS font-family 字符串（不在枚举里也能填）。"
+        },
+        "prettyCommit.diffFontWeight": {
+          "type": "number",
+          "enum": [
+            400,
+            500,
+            550,
+            600
+          ],
+          "enumDescriptions": [
+            "常规（Regular）",
+            "中等（Medium）",
+            "介于 Medium 与 Semibold（默认）",
+            "半粗（Semibold）"
+          ],
+          "default": 500,
+          "description": "右侧 diff 代码字重。行号保持 400，避免两列数字发糊。默认 500（中等，更易辨认）；可选 400 / 550 / 600。"
+        },
+        "prettyCommit.diffFontSize": {
+          "type": "number",
+          "default": 13,
+          "minimum": 8,
+          "maximum": 28,
+          "description": "右侧 diff 代码基础字号（px）。顶栏 ± 缩放是在此基础上倍率调整；默认 13。"
+        },
+        "prettyCommit.diffForeground": {
+          "type": "string",
+          "default": "",
+          "description": "diff 正文（上下文行）文字颜色。留空用内置 #24292f；可填 CSS 颜色如 #1f2328。"
+        },
+        "prettyCommit.diffBackground": {
+          "type": "string",
+          "default": "",
+          "description": "diff 区背景色。留空用内置白底 #fff；仅改整体底色，增删行的绿/红行色仍用内置 palette。"
+        },
+        "prettyCommit.colorComments": {
+          "type": "boolean",
+          "default": true,
+          "description": "把注释（//、#、/* */、<!-- -->、--）渲染成灰绿斜体，和正文区分。只做注释/代码两色，不做完整语法高亮。"
         },
         "prettyCommit.focusWindow": {
           "type": "string",
