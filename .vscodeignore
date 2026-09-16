@@ -1,0 +1,10 @@
+.git/**
+.vscode/**
+node_modules/**
+*.vsix
+*.vsix.*
+pretty_commit_ui_093cb708.plan.md
+.smoke.js
+assets/**
+images/icon128.png
+images/icon256.png
