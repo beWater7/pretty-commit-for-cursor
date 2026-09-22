@@ -110,6 +110,53 @@
     background: rgba(127,127,127,.08);
   }
   /* ---- 状态条 ---- */
+  /* ---- 页签：并排打开的多笔 diff，互不覆盖 ---- */
+  #tabs {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: stretch;
+    gap: 1px;
+    padding: 0 6px;
+    background: var(--vscode-editorWidget-background, #252526);
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+  .tab {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+    max-width: 340px;
+    padding: 4px 4px 4px 10px;
+    font-size: 12px;
+    color: var(--dim);
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    white-space: nowrap;
+    flex: 0 0 auto;
+  }
+  .tab:hover { background: rgba(127,127,127,.12); }
+  .tab.active { color: var(--fg); border-bottom-color: var(--vscode-focusBorder, #007fd4); }
+  .tab .t-sha { font-family: var(--mono); font-size: 11px; flex: 0 0 auto; }
+  .tab .t-sub { overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
+  .tab .t-x {
+    flex: 0 0 auto;
+    border: none;
+    background: transparent;
+    color: inherit;
+    font-size: 13px;
+    line-height: 1;
+    padding: 0 3px;
+    border-radius: 3px;
+    cursor: pointer;
+    opacity: .65;
+  }
+  .tab .t-x:hover { background: rgba(127,127,127,.3); opacity: 1; }
+  /* 顶栏里被「打开」的开关（双页对比等） */
+  .ctrl button.icon.tool.on {
+    color: var(--vscode-focusBorder, #007fd4);
+    background: rgba(0, 127, 212, .18);
+  }
   #status {
     flex: 0 0 auto;
     padding: 3px 10px;
@@ -189,35 +236,149 @@
   .glyph { font-family: var(--mono); font-size: 11px; flex: 0 0 auto; }
   #listEmpty { padding: 10px; color: var(--dim); }
   /* ---- 右 diff 区 ---- */
-  /* diff 面固定用 Gerrit 观感：纯白底 + 不透明的浅绿/浅红整行色。
-     这里**重新声明**已有的语义变量名（--fg/--dim/--border/--add-bg…），
-     下面所有 var(--fg) 之类的引用在 section 内就自动取到浅色值，无需改选择器。
-     注意必须同时重设 color 本身：body 上的 color 是用深色主题的 --fg 算好的，
-     section 只改 --fg 不会改变它自己继承到的 color，深色主题下就成了浅灰字压白底。 */
+  /* 结构性样式（与配色无关）。背景/文字色必须在这里显式取 --bg/--fg：
+     body 上的 color 是按 VS Code 主题算好的，只改 section 里的变量不会改变它继承到的 color。 */
   section {
     flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0;
-    --bg: #fff;
-    --fg: #24292f;             /* 正文近黑，白底上更易辨认 */
-    --dim: #6e7781;            /* 次级文字 / 占位提示 */
-    --border: #d8dee4;         /* 分隔线 */
-    --add-bg: #aceebb;         /* 新增行：比 Gerrit 原版 #ddffdd 更实，区别度更高 */
-    --del-bg: #ffc9c9;         /* 删除行 */
-    --add-gutter: #d7f2de;     /* add 行的行号列底色：比代码区浅，数字仍看得清 */
-    --del-gutter: #ffdede;     /* del 行的行号列底色 */
-    --hh-bg: #eef1f4;          /* hunk 头：中性浅灰，取代原来的蓝 */
-    --hh-fg: #57606a;
-    --lnx: #e3e6ea;            /* 行号列分隔线 */
-    --ln-fg: #6a737d;          /* 行号文字 */
-    --gutter-bg: #f6f8fa;      /* 行号列底色：比正文略暗，把 gutter 和代码分层 */
-    --chg: #0969da;            /* 「当前改动点」的左侧标记 */
-    --flash-bg: #ffec8b;       /* 跳到改动点闪高：#fff3b0 与 #ffe566 之间 */
-    --cmt: #6b8f6b;            /* 注释：灰绿、斜体，略淡于正文 */
     background: var(--bg);
     color: var(--fg);
   }
+
+  /* ---- 配色 ----
+     两套主题。**底色/正文/注释基线取自 Gerrit 官方**，语法 token 用的是另一套更克制的配色
+     （见每行注释）。Gerrit 的「background / highlight」正好对应这套布局的两个位置：
+       整行底色（符号列 + 代码）= background；不再有第二条「highlight」色带（见下）。
+     谁的变量生效由 body 上的 pc-light / pc-dark 决定（见 applyTheme()）—— 切主题只换类，
+     不重绘 diff。
+     这里**只管「跟主题走」的颜色**；色带（增删行的绿/红及其前景色）是另一个轴，写在下面的
+     .i-subtle / .i-standard / .i-strong 三块里，两轴独立组合（3 × 2 = 6 种）。 */
+  body.pc-light section {
+    --bg: #ffffff;             /* Background */
+    --fg: #202124;             /* Text */
+    --dim: #5f6368;            /* 次级文字：Gerrit 未定义，取同族 Google Grey 700 */
+    --border: #dadce0;
+    /* 色带 + 落在色带上的符号/注释（共 5 个变量）都在下面的
+       .i-subtle / .i-standard / .i-strong 三块里 —— 它们随「深浅」变，不随主题变。
+       行号列不染，它跟上下文行走同一套中性色。 */
+    --hh-bg: #f1f3f4;          /* hunk 头（Gerrit 未定义，同族浅灰） */
+    --hh-fg: #5f6368;
+    --lnx: #dadce0;            /* 行号列分隔线 */
+    --ln-fg: #5f6368;
+    --gutter-bg: #f8f9fa;      /* 上下文行的行号列：比正文略暗，把 gutter 和代码分层 */
+    --chg: #1967d2;            /* 当前改动点：Gerrit Type 蓝 */
+    --flash-bg: #ffec8b;       /* 跳到改动点闪高 */
+    --cmt: #6e7781;            /* Comment（正文/白底行）*/
+    /* 语法 token：柔和配色（不是 Gerrit 那套高饱和的 CodeMirror 色 —— 那套铺在绿/红
+       色带上会和底色打架）。只留四个色相，都在「绿/红底上都不打架」的安全范围内。 */
+    --tok-kw: #0550ae;         /* 关键字（if/for/while/return）*/
+    --tok-type: #953800;       /* 内置类型与宏：int/uint32_t/RCC_CR_* */
+    --tok-num: #0550ae;        /* 数字常量 */
+    --tok-str: #0a3069;        /* 字符串 */
+    --tok-fn: #8250df;         /* 函数名 / 调用 */
+    --tok-mem: #24292f;        /* 成员访问，跟随正文 */
+    --tok-pre: #6e7781;        /* 预处理指令 #include… */
+    --tok-esc: #0a3069;        /* 转义序列（在字符串里，与字符串同色）*/
+  }
+  body.pc-dark section {
+    --bg: #202124;             /* Background */
+    --fg: #e8eaed;             /* Text */
+    --dim: #9aa0a6;
+    --border: #3c4043;
+    /* 色带 + 落在色带上的符号/注释（共 5 个变量）都在下面的
+       .i-subtle / .i-standard / .i-strong 三块里 —— 它们随「深浅」变，不随主题变。
+       行号列不染，它跟上下文行走同一套中性色。 */
+    --hh-bg: #2e3135;
+    --hh-fg: #9aa0a6;
+    --lnx: #3c4043;
+    --ln-fg: #9aa0a6;
+    --gutter-bg: #292a2d;
+    --chg: #75a5ff;            /* 当前改动点：Gerrit Dark Function title 蓝 */
+    --flash-bg: #6b5a1e;
+    --cmt: #8b949e;            /* Comment（正文/白底行）*/
+    /* 语法 token：柔和配色（同浅色那套的深色版）*/
+    --tok-kw: #ff7b72;         /* 关键字 */
+    --tok-type: #ffa657;       /* 内置类型与宏 */
+    --tok-num: #79c0ff;        /* 数字常量 */
+    --tok-str: #a5d6ff;        /* 字符串 */
+    --tok-fn: #d2a8ff;         /* 函数名 / 调用 */
+    --tok-mem: #c9d1d9;        /* 成员访问 */
+    --tok-pre: #8b949e;        /* 预处理指令 */
+    --tok-esc: #a5d6ff;        /* 转义序列 */
+  }
+  /* ---- 色带深浅：淡 / 标准 / 浓 ----
+     Gerrit 官方给的「ADD background」是 Material 的 50 号色（浅色 #D8FED8、深色 #2C553A），
+     铺满整行时太淡 —— 实测它和白底的对比只有 1.10 / 1.14，几乎看不出色带。所以官方那档只当
+     「淡」，默认用「标准」。三档的色相都钉在 Gerrit 原值上（浅色绿 120°、红 353°；
+     深色绿 140°、红 1°），只动亮度，所以换档不会变成另一种绿/红。
+
+     **红绿必须等重**：官方那对在浅色里是 1.10 / 1.14（几乎相等），但在深色里是 1.89 / 1.23 ——
+     红色明显偏轻。加深时如果按「各自的对比度」去调，很容易把红压得比绿重得多（试过一版是
+     1.32 / 2.11），看起来就是红行一片荧光、绿行正常，整体很脏。所以「标准」和「浓」都按
+     **绿行与红行的亮度相等**来解（`--add-bg` 与 `--del-bg` 的亮度差 < 0.005），这才是真正的等重。
+
+     每个档位块管 5 个变量，分两类：
+       ① 色带（--add-bg / --del-bg）：整行底色 —— **从符号列一直到代码末尾都是它**。
+          符号列的底色是 `background: inherit` 继承过来的，所以两者天然一致，
+          不会在 +/- 号那里出现第二条更深/更亮的色带。
+          **行号列不染**：行号始终用中性的 --gutter-bg / --ln-fg，和上下文行一样 ——
+          数字那一带保持干净的灰底。
+       ② 落在色带上的前景色：--add-mark / --del-mark（+ / − 符号）、--cmt-on-tint（注释）。
+     ② 这一组必须跟着档位走，否则会糊：同一色系里前景和背景不能同时变深 ——
+     色带越深，符号和注释就得往反方向走。所以加深色带就必然要重配这批前景色。
+
+     深浅和主题是两个独立的轴（3 × 2 = 6 种组合），所以档位块写成 body.pc-<主题>.i-<深浅>；
+     主题块只管「跟主题走」的那些色（背景、正文、token、上下文行 gutter…），不碰色带。
+
+     数值不是随手挑的，是按这几条硬约束解出来的（assets/pc-lineno-test.js 会把 6 种组合逐个复算）：
+       · 色带上的正文对比 ≥ 4.5 —— 这是加深的上限。深色主题先撞上它：再亮下去正文就糊。
+       · 色带上的 +− 符号 ≥ 4.5 —— 字号最小，最不能糊。
+       · 色带上的注释：浅色 ≥ 4.0、深色 ≥ 3.1。
+       · 加深的两档红绿亮度差 < 0.005；三档的「存在感」逐档上升，色相不许跑偏。 */
+  body.pc-light.i-subtle section {
+    --add-bg:        #d8fed8;   /* 色带：整行底色 */
+    --del-bg:        #ffebee;   /* 色带：整行底色 */
+    --add-mark:      #166534;   /* 色带上的 + 号 */
+    --del-mark:      #a40e26;   /* 色带上的 − 号 */
+    --cmt-on-tint:   #606871;   /* 色带上的注释 */
+  }
+  body.pc-light.i-standard section {
+    --add-bg:        #adf5af;   /* 色带：整行底色 */
+    --del-bg:        #f9d5db;   /* 色带：整行底色 */
+    --add-mark:      #166534;   /* 色带上的 + 号 */
+    --del-mark:      #a40e26;   /* 色带上的 − 号 */
+    --cmt-on-tint:   #596069;   /* 色带上的注释 */
+  }
+  body.pc-light.i-strong section {
+    --add-bg:        #90f295;   /* 色带：整行底色 */
+    --del-bg:        #f8c9d0;   /* 色带：整行底色 */
+    --add-mark:      #166534;   /* 色带上的 + 号 */
+    --del-mark:      #a40e26;   /* 色带上的 − 号 */
+    --cmt-on-tint:   #535a62;   /* 色带上的注释 */
+  }
+  body.pc-dark.i-subtle section {
+    --add-bg:        #2c553a;   /* 色带：整行底色 */
+    --del-bg:        #62110f;   /* 色带：整行底色 */
+    --add-mark:      #8ff0b0;   /* 色带上的 + 号 */
+    --del-mark:      #ff9b94;   /* 色带上的 − 号 */
+    --cmt-on-tint:   #aab1b8;   /* 色带上的注释 */
+  }
+  body.pc-dark.i-standard section {
+    --add-bg:        #25623c;   /* 色带：整行底色 */
+    --del-bg:        #97211e;   /* 色带：整行底色 */
+    --add-mark:      #a7f3c1;   /* 色带上的 + 号 */
+    --del-mark:      #ffcdc9;   /* 色带上的 − 号 */
+    --cmt-on-tint:   #b8bec4;   /* 色带上的注释 */
+  }
+  body.pc-dark.i-strong section {
+    --add-bg:        #256e42;   /* 色带：整行底色 */
+    --del-bg:        #ab1d1c;   /* 色带：整行底色 */
+    --add-mark:      #d7fae2;   /* 色带上的 + 号 */
+    --del-mark:      #ffdbd9;   /* 色带上的 − 号 */
+    --cmt-on-tint:   #c7ccd1;   /* 色带上的注释 */
+  }
   /* 这两个类在深色壳（左列表）和白底（diff 头）里都用，所以只在 section 内换深色版 */
-  section .add-c { color: #1a7f37; }
-  section .del-c { color: #cf222e; }
+  section .add-c { color: var(--add-mark); }
+  section .del-c { color: var(--del-mark); }
   #diffhead {
     flex: 0 0 auto;
     padding: 6px 10px;
@@ -232,6 +393,16 @@
     text-overflow: ellipsis;
   }
   #diffnote { flex: 0 0 auto; padding: 4px 10px; font-size: 11px; color: var(--dim); }
+  /* diff 头里的路径：占满剩余宽度、过长省略，别把右边的按钮挤出可视区 */
+  #diffhead .dpath { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  /* diff 头右侧的「跳到原文」按钮 */
+  #diffhead button.jump {
+    margin-left: auto;
+    flex: 0 0 auto;
+    font-size: 11px;
+    padding: 1px 8px;
+    align-self: center;
+  }
   #placeholder {
     flex: 1;
     display: flex;
@@ -261,23 +432,27 @@
     /* 行号单独缩小字号，列宽按 digit 数收紧 */
     --ln-w: calc(var(--ln-digits, 3) * 7px + 4px);
   }
-  /* 一行 = 旧行号 | 新行号 | 正文。
-     行号列用略暗的灰底（--gutter-bg），和正文分成两层；
-     add/del 行的行号列跟着染成更浅的绿/红（--add-gutter / --del-gutter），
-     整行看起来是一条连续色带，但数字比代码区底色浅、仍然看得清。
-     .hl 自己也要给不透明底色：行号列是 sticky 的，横向滚动时正文要从它底下滑过去。 */
+  /* 一行 = 旧行号 | 新行号 | 符号 | 正文。
+     行号列用略暗的灰底（--gutter-bg），和正文分成两层，**任何行都是这个底** ——
+     add/del 行的行号列不染，色带从符号列开始，而且符号列与代码区同色（一条均匀色带）。
+     .hl 自己也要给不透明底色：行号列和符号列都是 sticky 的，横向滚动时正文要从它们底下滑过去。 */
   .hl {
     display: flex;
     width: max-content;        /* 长行照旧横向滚动 */
     min-width: 100%;
     min-height: 1.5em;
-    background: #fff;
+    background: var(--bg);
     white-space: pre;
     user-select: text;
   }
   .hl.ctx { color: var(--fg); }
-  .hl.add { background: var(--add-bg); }
-  .hl.del { background: var(--del-bg); }
+  /* 增删行：整行就是 Gerrit 的 background 色，**平涂**。
+     这里刻意不用 linear-gradient：一行一个 div、连续多行各自画一次渐变，接缝处会看出
+     一条条横纹（像百叶窗），越长的改动块越明显。精致感交给 +/- 符号和语法着色，不交给渐变。
+     用 :where(:not(.sbs)) 而不是 :not(.sbs)：:where 不贡献优先级，
+     否则这条 (0,3,0) 会盖过后面的 .hl.flash（跳到改动点时的闪高）。 */
+  .hl.add:where(:not(.sbs)) { background: var(--add-bg); }
+  .hl.del:where(:not(.sbs)) { background: var(--del-bg); }
   .hl.nonl { color: var(--dim); }        /* "\ No newline at end of file" */
   .ln {
     flex: 0 0 var(--ln-w);
@@ -291,11 +466,22 @@
     line-height: 1.5em;
     font-weight: 400;
   }
-  /* add/del 行的行号列也跟着染色（比代码区浅），整行看起来是一条连续的色带 */
-  .hl.add .ln { background: var(--add-gutter); }
-  .hl.del .ln { background: var(--del-gutter); }
+  /* add/del 行的符号列：**和代码区一个底色**（inherit 整行的色带），不另外加深/提亮。
+     整行从符号列到代码末尾是一条均匀色带，分隔靠 +/- 符号本身的颜色，不靠第二条色带。
+     符号列 sticky，必须不透明；底色 inherit 自 .hl（或双页的 .side），本身就是不透明的。
+     右侧那条 1px 分隔线也一并透明掉，否则色带上会多出一条灰色细线。 */
+  .hl.add .sign, .hl.del .sign { background: inherit; border-right-color: transparent; }
   .ln-old { left: 0; border-right: 1px solid var(--lnx); }
   .ln-new { left: var(--ln-w); border-right: 1px solid var(--lnx); }
+  /* 行号就是「跳到原文这一行」的把手：行号本来就 user-select:none，
+     拿它当点击热区不会和拖选代码打架（点代码区仍然是选文字）。
+     只有真的有对应行号的行才可点 —— 见 makeLine/makeSbsCell 里的 data-ln-jump。 */
+  .ln[data-ln-jump] { cursor: pointer; }
+  .ln[data-ln-jump]:hover {
+    color: var(--fg);
+    text-decoration: underline;
+    background: var(--lnx);
+  }
   /* +/- 单独一列：与代码区 visual 分隔，且不可选中（复制代码不会带上前缀） */
   .sign {
     flex: 0 0 var(--sign-w);
@@ -311,10 +497,9 @@
     left: calc(var(--ln-w) * 2);
     border-right: 1px solid var(--lnx);
   }
-  .hl.add .sign { background: var(--add-gutter); }
-  .hl.del .sign { background: var(--del-gutter); }
-  .sign.add-mark { color: #1a7f37; }
-  .sign.del-mark { color: #cf222e; }
+  /* 符号用 highlight 色系里更实的那一笔 */
+  .sign.add-mark { color: var(--add-mark); font-weight: 700; }
+  .sign.del-mark { color: var(--del-mark); font-weight: 700; }
   .code {
     flex: 0 0 auto;
     padding: 0 10px 0 8px;
@@ -322,11 +507,24 @@
     user-select: text;
   }
   .cmt { color: var(--cmt); font-style: italic; font-weight: 400; }
+  /* 有色行上的注释单独给色：Gerrit 的 #3F7F5F 是中间调，铺在加深过的色带上会糊（≤2.3:1）。
+     白底行不动，仍然用 Gerrit 原值；只在增删行上换成能压住色带的版本，颜色随深浅三档走。 */
+  .hl.add .cmt, .hl.del .cmt,
+  .hl.sbs .side.add .cmt, .hl.sbs .side.del .cmt { color: var(--cmt-on-tint); }
+  /* ---- 语法着色：只给需要区分的 token 套 span，其余走纯文本节点（省 CPU） ---- */
+  .tk-kw { color: var(--tok-kw); }
+  .tk-type { color: var(--tok-type); }
+  .tk-num { color: var(--tok-num); }
+  .tk-str { color: var(--tok-str); }
+  .tk-fn { color: var(--tok-fn); }
+  .tk-mem { color: var(--tok-mem); }
+  .tk-pre { color: var(--tok-pre); }
+  .tk-esc { color: var(--tok-esc); }
   /* 当前改动点：代码区左边一条蓝色标记（inset shadow 不占布局，文字不会位移） */
   .hl.chg .code { box-shadow: inset 4px 0 0 0 var(--chg); }
   /* 刚跳过来时整块闪一下，位置好找；放在 .add/.del 之后才能盖住它们的底色 */
-  .hl.flash { background: var(--flash-bg); }
-  .hl.flash .ln { background: inherit; }
+  .hl.flash { background: var(--flash-bg); box-shadow: none; }
+  .hl.flash .ln, .hl.flash .sign, .hl.flash .code { background: inherit; }
   .hh {
     background: var(--hh-bg);
     color: var(--hh-fg);
@@ -337,6 +535,50 @@
     cursor: pointer;
   }
   .hh.cur { outline: 1px solid var(--hh-fg); }
+  /* ---- 双页对比（左旧右新）----
+     一行仍然是一个 .hl，里面左右两个 .side；这样改动块导航 / 选区 / 送 Chat
+     这些按行工作的逻辑一行都不用改。两侧各占 50%，长行走折行（不裁切，信息不丢）。 */
+  #diffbody.sbs-mode { overflow-x: hidden; }
+  .hl.sbs { width: 100%; min-width: 0; display: flex; align-items: stretch; }
+  .hl.sbs .side {
+    flex: 1 1 50%;
+    min-width: 0;
+    display: flex;
+    align-items: flex-start;
+    background: var(--bg);
+    border-left: 1px solid var(--lnx);
+  }
+  .hl.sbs .side.left { border-left: none; }
+  .hl.sbs .side.del { background: var(--del-bg); }
+  .hl.sbs .side.add { background: var(--add-bg); }
+  /* 对侧没有对应行：铺一块中性空底，一眼看出这里是纯增 / 纯删 */
+  .hl.sbs .side.empty { background: var(--gutter-bg); }
+  .hl.sbs .side.del .sign, .hl.sbs .side.add .sign { background: inherit; border-right-color: transparent; }
+  .hl.sbs .side.empty .ln, .hl.sbs .side.empty .sign { background: var(--gutter-bg); }
+  /* 单页里的行号是 sticky（横向滚动时钉住）；双页没有横向滚动，取消掉更省事 */
+  .hl.sbs .ln, .hl.sbs .sign { position: static; }
+  .hl.sbs .code {
+    flex: 1 1 auto;
+    min-width: 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  /* 双页里 hunk 头只需跨过「一列行号 + 一列 sign」；长 hunk 头折行，别被裁掉 */
+  #diffbody.sbs-mode .hh {
+    padding-left: calc(var(--ln-w, 48px) + var(--sign-w, 14px) + 6px);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  /* 双页里整行底色被两个 .side 盖住了，闪高得画到 .side 上才看得见 */
+  .hl.sbs.flash .side,
+  .hl.sbs.flash .side.add,
+  .hl.sbs.flash .side.del,
+  .hl.sbs.flash .side.empty,
+  .hl.sbs.flash .side .ln,
+  .hl.sbs.flash .side .sign,
+  .hl.sbs.flash .ln,
+  .hl.sbs.flash .sign { background: var(--flash-bg); }
+
   .note { padding: 3px 10px; color: var(--dim); font-size: 11px; }
   .notrunc { border-top: 1px dashed var(--border); }
   /* 选中有内容时浮出的「添加到 Chat」按钮（Ctrl+L 的鼠标等价物） */
@@ -405,6 +647,38 @@
 </style>
 </head>
 <body>
+<!-- 主题先行：必须在第一次绘制之前把 pc-light / pc-dark 挂到 body 上，否则深色主题下会先闪一下
+     白底的 diff 区。这段是「读 VS Code 注入的 --vscode-editor-background 算亮度」的**唯一**实现，
+     后面 applyTheme() 复用它（pcEditorIsDark），所以不存在两套判断逻辑。 -->
+<script>
+function pcEditorIsDark() {
+  try {
+    var raw = getComputedStyle(document.body).getPropertyValue('--vscode-editor-background').trim();
+    var m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(raw);
+    var rgb = null;
+    if (m) {
+      var h = m[1];
+      if (h.length === 3) h = h.split('').map(function (c) { return c + c; }).join('');
+      rgb = h.match(/../g).map(function (x) { return parseInt(x, 16); });
+    } else {
+      var r = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/.exec(raw);
+      if (r) rgb = [Number(r[1]), Number(r[2]), Number(r[3])];
+    }
+    if (!rgb) return false; // 读不到就按浅色（Gerrit 浅色是默认观感）
+    var lin = rgb.map(function (v) {
+      var x = v / 255;
+      return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4);
+    });
+    return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2] < 0.5;
+  } catch (e) {
+    return false;
+  }
+}
+document.body.classList.add(pcEditorIsDark() ? 'pc-dark' : 'pc-light');
+// 色带深浅也要在首绘前定下来（默认「标准」；宿主送来的 uiState 里若存过别的档，稍后 applyTheme 会换）。
+// 不挂这个类的话首帧的行底色是空的，会闪一下没有色带的 diff。
+document.body.classList.add('i-standard');
+</script>
   <header class="bar">
     <div class="meta">
       <div id="commit-meta">Pretty Commit</div>
@@ -419,6 +693,10 @@
         <span class="nav-gap" aria-hidden="true"></span>
         <button id="btn-prev-file" class="icon tool file" title="上一个文件（P / ←）">P</button>
         <button id="btn-next-file" class="icon tool file" title="下一个文件（N / →）">N</button>
+        <button id="btn-sbs" class="icon tool" title="双页对比：左旧右新并排显示（s）">◫</button>
+        <button id="btn-sym" class="icon tool" title="符号差异：换行符 / 行尾空白 / 文件末尾换行（¶）">¶</button>
+        <button id="btn-theme" class="icon tool" title="diff 配色：跟随编辑器。点一下切 跟随 / 浅色 / 深色（t）">◐</button>
+        <button id="btn-refresh" class="icon tool" title="重读 diff（r）：文件在别处改过 / 刚存盘 / 刚 git add 时用。Shift+R 刷新全部 diff 标签">↻</button>
       </span>
       <span class="sep"></span>
       <span class="zoom">
@@ -432,6 +710,7 @@
       <button id="btn-close" title="关闭 (Esc)">关闭</button>
     </div>
   </header>
+  <div id="tabs" class="hidden"></div>
   <div id="diag" class="hidden"></div>
   <div id="status" class="hidden"></div>
 
@@ -451,10 +730,14 @@
   <footer>
     <span><kbd>←</kbd>/<kbd>→</kbd> 或 <kbd>P</kbd>/<kbd>N</kbd> 文件</span>
     <span><kbd>↑</kbd>/<kbd>↓</kbd> 或 <kbd>[</kbd>/<kbd>]</kbd> 改动</span>
+    <span><kbd>s</kbd> 双页对比</span>
+    <span>点行号 跳到该行 · <kbd>o</kbd> 打开原文</span>
+    <span><kbd>r</kbd> 重读 diff</span>
     <span><kbd>Ctrl</kbd>+点击 定义 · <kbd>Alt</kbd>+点击 引用</span>
     <span><kbd>Shift</kbd>+<kbd>A</kbd> 整笔分析</span>
     <span><kbd>Shift</kbd>+<kbd>F</kbd> 本文件分析</span>
     <span><kbd>b</kbd> 收起列表</span>
+    <span><kbd>x</kbd> 关页签</span>
     <span><kbd>Esc</kbd> 关闭</span>
     <span style="margin-left:auto; opacity:.8" id="host-build"></span>
     <span id="ai-hint"></span>
@@ -534,6 +817,11 @@
   const STATUS_NAME = { A: '新增', M: '修改', D: '删除', R: '重命名', T: '类型变更' };
 
   const S = {
+    // ---- 多文档（页签）：打开的每一笔 diff 各自一份，互不覆盖 ----
+    docs: [],        // [{ id, shortSha, subject, working, commit, view:{idx,open,hunkIdx,chgIdx,lastSel,scroll} }]
+    activeId: null,  // 当前页签的 id（无页签时为 null）
+
+    // ---- 下面是「当前页签」的实时视图状态（切页签时与 docs[i].view 互换）----
     files: [],
     idx: 0,
     open: true,      // 右侧是否展开
@@ -551,6 +839,15 @@
     listOpen: true,   // 左侧文件列表是否展开
     listWidth: 220,   // 左侧文件列表宽度 px（拖动手柄改）
     colorComments: true,
+    syntaxHighlight: true, // Gerrit 风格语法着色
+    sideBySide: false,     // 双页对比（左旧右新）
+    ignoreSymbols: true,   // 忽略「只差换行符/行尾空白」的改动（默认开；¶ 可切）
+    symbolOnly: [],        // 因为上面这条而被 git 从 diff 里抹掉的文件名
+    symbolsIgnored: true,  // 宿主实际用的是忽略模式（数据可能是旧的/宿主较老）
+    diffTheme: 'auto',     // diff 配色：auto 跟随编辑器 / light / dark（Gerrit Light / Gerrit Dark）
+    diffIntensity: 'standard', // 色带深浅：subtle（Gerrit 原色）/ standard / strong
+    themeResolved: 'light',// auto 解析出来的实际主题（用于提示文案与自检）
+    nativeTabs: false,     // 宿主把每个 diff 都开成了独立编辑器标签 → 页面不再画内部页签栏
     baseFontSize: 13, // 来自 prettyCommit.diffFontSize；± 缩放以此为基准
     diffForeground: null,
     diffBackground: null,
@@ -631,6 +928,192 @@
     saveUi();
   }
 
+  // ---------- 双页对比 ----------
+  function applySbs() {
+    const btn = $('#btn-sbs');
+    if (btn) {
+      btn.classList.toggle('on', !!S.sideBySide);
+      btn.title = S.sideBySide ? '切回单页（s）' : '双页对比：左旧右新并排显示（s）';
+    }
+  }
+
+  function toggleSideBySide() {
+    S.sideBySide = !S.sideBySide;
+    applySbs();
+    saveUi();
+    if (!S.files.length) { showStatus(S.sideBySide ? '已切到双页对比' : '已切回单页'); return; }
+    // 重绘会清空 DOM 并把滚动条拉回顶部；按滚动比例还原，切模式时不会「跳回文件头」
+    const body = $('#diffbody');
+    const before = body.scrollHeight > body.clientHeight
+      ? body.scrollTop / (body.scrollHeight - body.clientHeight) : 0;
+    renderDiff();
+    const after = $('#diffbody');
+    if (after.scrollHeight > after.clientHeight) after.scrollTop = before * (after.scrollHeight - after.clientHeight);
+    showStatus(S.sideBySide ? '双页对比：左旧 / 右新' : '单页视图');
+  }
+
+  // ---------- 符号差异（换行符 / 行尾空白）----------
+  // 这个开关和「双页对比」不是一类东西：双页只改画法，本地重绘就够了；而它决定 git 用哪组
+  // flag 算 diff（见 src/git.js 的 SYMBOL_IGNORE_FLAGS），所以切了必须让宿主重算数据。
+  function applySym() {
+    const btn = $('#btn-sym');
+    if (!btn) return;
+    btn.classList.toggle('on', !!S.ignoreSymbols);
+    btn.title = S.ignoreSymbols
+      ? '已忽略符号差异：换行符（CRLF/LF）、行尾空白、文件末尾换行 —— 只差这些的文件不会出现在列表里（¶ 显示它们）'
+      : '正在显示符号差异：只差换行符/行尾空白的行也会标成红绿（¶ 忽略它们）';
+  }
+
+  function toggleIgnoreSymbols() {
+    S.ignoreSymbols = !S.ignoreSymbols;
+    applySym();
+    saveUi();
+    // 数据得重算，所以带上新值发一条；宿主会存进 globalState 再回 git 重跑。
+    try { vscode.postMessage({ type: 'refreshDiff', ignoreSymbols: S.ignoreSymbols }); } catch { /* 忽略 */ }
+    showStatus(S.ignoreSymbols ? '已忽略符号差异（换行符 / 行尾空白），正在重算…' : '正在显示符号差异，重算中…');
+  }
+
+  // ---------- diff 区配色：Gerrit Light / Gerrit Dark ----------
+  // auto（默认）= 跟随编辑器主题。判断实现在 body 开头那段「主题先行」脚本里（pcEditorIsDark，
+  // 必须在首次绘制前就把类挂上，否则深色主题会闪一下白底）：它读 VS Code 注入的
+  // --vscode-editor-background 算亮度，比认 body 上的 vscode-dark 类可靠（后者是 webview 的实现细节）。
+  function editorIsDark() {
+    return typeof pcEditorIsDark === 'function' ? pcEditorIsDark() : false;
+  }
+
+  function resolvedTheme() {
+    if (S.diffTheme === 'light' || S.diffTheme === 'dark') return S.diffTheme;
+    return editorIsDark() ? 'dark' : 'light';
+  }
+
+  const THEME_GLYPH = { auto: '◐', light: '☀', dark: '☾' };
+  const THEME_NAME = { auto: '跟随编辑器', light: '强制浅色', dark: '强制深色' };
+
+  // 色带深浅三档。淡 = Gerrit 官方原值（那档铺满整行确实太淡），默认走标准。
+  const DEPTH_ORDER = ['subtle', 'standard', 'strong'];
+  const DEPTH_NAME = { subtle: '淡（Gerrit 原色）', standard: '标准', strong: '浓' };
+  function normDepth(v) {
+    return DEPTH_ORDER.indexOf(v) >= 0 ? v : 'standard';
+  }
+
+  // 只做幂等的 class 切换：值没变就不产生 DOM 变更，所以下面那个 MutationObserver
+  // 不会因为自己改 class 而再次触发（不会自激）。
+  function applyTheme() {
+    const t = resolvedTheme();
+    S.themeResolved = t;
+    document.body.classList.toggle('pc-light', t === 'light');
+    document.body.classList.toggle('pc-dark', t === 'dark');
+    const depth = normDepth(S.diffIntensity);
+    S.diffIntensity = depth;
+    for (const d of DEPTH_ORDER) document.body.classList.toggle('i-' + d, d === depth);
+    const btn = $('#btn-theme');
+    if (btn) {
+      btn.textContent = THEME_GLYPH[S.diffTheme] || THEME_GLYPH.auto;
+      btn.classList.toggle('on', S.diffTheme !== 'auto' || depth !== 'standard');
+      btn.title =
+        `diff 配色：${THEME_NAME[S.diffTheme] || THEME_NAME.auto}` +
+        `（当前 Gerrit ${t === 'dark' ? 'Dark' : 'Light'}，色带 ${DEPTH_NAME[depth]}）\n` +
+        `点一下切 跟随 / 浅色 / 深色（t）；Shift+点击切 色带深浅 淡 / 标准 / 浓（d）`;
+    }
+  }
+
+  function cycleDiffTheme() {
+    const order = ['auto', 'light', 'dark'];
+    S.diffTheme = order[(order.indexOf(S.diffTheme) + 1) % order.length];
+    applyTheme();
+    saveUi();
+    showStatus(
+      `diff 配色：${THEME_NAME[S.diffTheme]}` +
+        (S.diffTheme === 'auto' ? `（Gerrit ${S.themeResolved === 'dark' ? 'Dark' : 'Light'}）` : '')
+    );
+  }
+
+  // 色带深浅：纯 CSS 换 class，不用回 git 重算（和 ¶ 不一样）
+  function cycleDiffDepth(step) {
+    const cur = DEPTH_ORDER.indexOf(normDepth(S.diffIntensity));
+    const dir = step === -1 ? -1 : 1;
+    S.diffIntensity = DEPTH_ORDER[(cur + dir + DEPTH_ORDER.length) % DEPTH_ORDER.length];
+    applyTheme();
+    saveUi();
+    showStatus(`色带深浅：${DEPTH_NAME[S.diffIntensity]}`);
+  }
+
+  // 编辑器换主题时自动跟着换（只在 auto 下有意义）。观察 html/body 的 class 与 style：
+  // VS Code 换主题时会重写这两处。
+  function watchEditorTheme() {
+    if (typeof MutationObserver !== 'function') return;
+    const obs = new MutationObserver(() => {
+      if (S.diffTheme === 'auto') applyTheme();
+    });
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style'] });
+    obs.observe(document.body, { attributes: true, attributeFilter: ['class', 'style'] });
+  }
+
+  // ---------- 一键跳原文 ----------
+  // 面板里看到的是 diff 片段，想改代码/看上下文得回到编辑器。这里把「当前文件 +
+  // 目标行」交给宿主：
+  //   工作区 diff → 打开磁盘上的真实文件（**可编辑**），光标落在对应行；
+  //   历史 commit → 打开「该提交那一刻」的文件快照（只读），行号才对得上。
+  // opts.line 指定行（点哪一行跳哪一行）；不传就退回「视口顶部那一行」（快捷键 o）。
+  // opts.worktree = 历史 diff 下放弃快照、去开当前工作区里的同名文件（Alt+点击行号）。
+  function topVisibleLine() {
+    const body = $('#diffbody');
+    if (!body) return null;
+    const top = body.scrollTop + 8;
+    for (const el of body.children) {
+      if (!el.classList || !el.classList.contains('hl')) continue;
+      if (el.offsetTop + el.offsetHeight < top) continue;
+      const nw = parseInt(el.dataset.lnNew || '', 10);
+      const od = parseInt(el.dataset.lnOld || '', 10);
+      return Number.isFinite(nw) ? nw : (Number.isFinite(od) ? od : null);
+    }
+    return null;
+  }
+
+  // 把某一行滚到视口顶部（找不到精确的那一行就滚到最接近的位置）。
+  // 为什么要按行而不是按像素还原滚动位置：重算后上面可能多了/少了几行、hunk 边界也可能变，
+  // 同一个 scrollTop 会落到另一行上去 —— 那样「刷新」在体感上就是「页面自己跳了」。
+  function scrollToLine(n) {
+    if (!Number.isFinite(n) || n <= 0) return false;
+    const body = $('#diffbody');
+    if (!body) return false;
+    let last = null;
+    for (const el of body.children) {
+      if (!el.classList || !el.classList.contains('hl')) continue;
+      const j = parseInt(el.dataset.lnJump || '', 10);
+      if (!Number.isFinite(j)) continue;
+      if (j >= n) { body.scrollTop = el.offsetTop; return true; }
+      last = el; // 目标行在文件末尾之后（内容变短了）→ 兜底滚到最后一行
+    }
+    if (last) { body.scrollTop = last.offsetTop; return true; }
+    return false;
+  }
+
+  function openSourceFile(opts) {
+    const o = opts || {};
+    const f = curFile();
+    if (!f) { toast('先选中一个文件'); return; }
+    const line = Number.isFinite(o.line) && o.line > 0 ? o.line : topVisibleLine();
+    vscode.postMessage({
+      type: 'openSource',
+      path: f.path,
+      line,
+      historical: !S.isWorking && !o.worktree,
+      worktree: !!o.worktree,
+    });
+  }
+
+  // ---------- 重读 diff（refresh）----------
+  // 为什么要它：diff 是「某一刻」从 git 算出来的快照。文件在别处被改（编辑器存盘、
+  // 终端里 git add / commit、外部工具改、切分支）之后，面板上显示的还是旧内容。
+  // 宿主也会在保存 / git 索引变化时自动重算，这里是手动兜底。
+  // 注意：重算不会重置你正在看的文件与滚动位置 —— 宿主下发新数据时，页面会先把
+  // 当前位置 captureView 下来，再按「文件路径优先、下标兜底」还原（见 applyDoc）。
+  function requestRefresh(all) {
+    vscode.postMessage({ type: 'refresh', all: !!all });
+    showStatus(all ? '正在重读全部 diff 标签…' : '正在重读 diff…');
+  }
+
   // 左右分栏拖动手柄。不用 CSS resize：Chromium webview 里 aside 的拖拽角经常不出现。
   (function bindSplit() {
     const handle = $('#split');
@@ -667,7 +1150,7 @@
     clearTimeout(uiSaveTimer);
     uiSaveTimer = setTimeout(() => {
       try {
-        vscode.postMessage({ type: 'saveUiState', ui: { zoom: S.zoom, listOpen: S.listOpen, listWidth: S.listWidth } });
+        vscode.postMessage({ type: 'saveUiState', ui: { zoom: S.zoom, listOpen: S.listOpen, listWidth: S.listWidth, sideBySide: S.sideBySide, ignoreSymbols: S.ignoreSymbols, diffTheme: S.diffTheme, diffIntensity: S.diffIntensity } });
       } catch { /* 忽略 */ }
     }, 400);
   }
@@ -697,7 +1180,36 @@
     const nextCmt = ui.colorComments !== false;
     const cmtChanged = nextCmt !== S.colorComments;
     S.colorComments = nextCmt;
-    if (cmtChanged && S.files.length) renderDiff();
+    const nextTk = ui.syntaxHighlight !== false;
+    const tkChanged = nextTk !== S.syntaxHighlight;
+    S.syntaxHighlight = nextTk;
+    const nextSbs = ui.sideBySide === true;
+    const sbsChanged = nextSbs !== S.sideBySide;
+    S.sideBySide = nextSbs;
+    applySbs();
+    // 配色：纯 CSS，换 class 就行，不用回 git 重算（和 ¶ 不一样）
+    const nextTheme = ui.diffTheme === 'light' || ui.diffTheme === 'dark' ? ui.diffTheme : 'auto';
+    if (nextTheme !== S.diffTheme) {
+      S.diffTheme = nextTheme;
+      applyTheme();
+    }
+    // 色带深浅同理
+    const nextDepth = ui.diffIntensity === 'subtle' || ui.diffIntensity === 'strong'
+      ? ui.diffIntensity : 'standard';
+    if (nextDepth !== S.diffIntensity) {
+      S.diffIntensity = nextDepth;
+      applyTheme();
+    }
+    // 符号差异开关：别的标签按了 ¶ 会通过 uiState 广播过来。这个开关改的是 git 的算法，
+    // 所以这里不能只更新按钮 —— 得让宿主重算数据（自己按的时候已经在点击处发过了）。
+    const nextSym = ui.ignoreSymbols !== false;
+    const symChanged = nextSym !== S.ignoreSymbols;
+    S.ignoreSymbols = nextSym;
+    applySym();
+    if (symChanged) {
+      try { vscode.postMessage({ type: 'refreshDiff' }); } catch { /* 忽略 */ }
+    }
+    if ((cmtChanged || tkChanged || sbsChanged) && S.files.length) renderDiff();
   }
 
   // ---------- 消息 ----------
@@ -710,12 +1222,30 @@
         break;
       case 'commit':
         try {
-          applyCommit(m.commit, m.hostVersion);
+          applyCommit(m.commit, m.hostVersion, m.docId, m.nativeTabs);
         } catch (e) {
           try {
             vscode.postMessage({ type: 'ext-error', text: 'applyCommit: ' + String(e && e.message || e) });
           } catch { /* 忽略 */ }
         }
+        break;
+      case 'tabs':
+        // 宿主侧的页签清单变了（切页签 / 关页签的确认回执），以宿主为准对一次
+        try {
+          if (Array.isArray(m.tabs) && m.tabs.length) {
+            const known = new Set(m.tabs.map((t) => t.id));
+            S.docs = S.docs.filter((d) => known.has(d.id));
+            for (const t of m.tabs) {
+              let d = docOf(t.id);
+              if (!d) { d = { id: t.id, view: {} }; S.docs.push(d); }
+              d.shortSha = t.shortSha;
+              d.subject = t.subject;
+              d.working = !!t.working;
+            }
+            if (m.activeDocId) S.activeId = m.activeDocId;
+          }
+          renderTabs();
+        } catch { /* 忽略 */ }
         break;
       case 'wantSelection': {
         // 宿主收到清单快捷键（Ctrl+L）后反过来问：现在选中的是什么
@@ -773,46 +1303,205 @@
     if (btn) btn.addEventListener('click', () => vscode.postMessage({ type: 'reloadWindow' }));
   }
 
-  function applyCommit(c, hostVersion) {
-    // 宿主 JS 是旧版时（改了 extension.js 但没 Reload Window），hostVersion 不会来。
-    // panel.html 是每次开面板时从磁盘现读的，所以只有页面这边能发现这件事 —— 必须主动提示，
-    // 否则「改了没生效」会被误判成「功能没做」。
-    S.staleHost = !hostVersion;
-    S.hostVersion = hostVersion || '';
-    const hb = $('#host-build');
-    if (hb) hb.textContent = hostVersion ? `宿主 ${hostVersion}` : '宿主 旧版(未重载)';
-    S.hiddenUnchanged = c.hiddenUnchanged || 0; // 被省略的「无内容变化」文件数（纯重命名/权限变更）
+  // 宿主下发的原始文件列表 → 面板要显示的文件列表。
+  // 老宿主不过滤 Δ=0（纯重命名 / 仅权限变更）；新宿主已经在 toViewModel 里滤过了，
+  // 判据：新宿主一定会带上 hiddenUnchanged 字段（哪怕是 0），老宿主不会。
+  function normalizeFiles(c) {
     const all = c.files || [];
-    // 老宿主不过滤 Δ=0（纯重命名 / 仅权限变更）；新宿主已经在 toViewModel 里滤过了。
-    // 判据：新宿主一定会带上 hiddenUnchanged 字段（哪怕是 0），老宿主不会。
     const hostFiltered = typeof c.hiddenUnchanged === 'number';
     const noContent = (f) => !f.binary && !f.added && !f.deleted;
-    const omitted = hostFiltered ? [] : all.filter(noContent);
-    S.files = hostFiltered ? all : all.filter((f) => !noContent(f));
-    if (!hostFiltered) S.hiddenUnchanged = omitted.length;
-    S.idx = 0;
-    S.open = true;
-    S.hunkIdx = 0;
+    if (hostFiltered) return { files: all, hiddenUnchanged: c.hiddenUnchanged || 0 };
+    const files = all.filter((f) => !noContent(f));
+    return { files, hiddenUnchanged: all.length - files.length };
+  }
+
+  // ---------- 多文档（页签） ----------
+  // 每打开一笔 diff 就是一份文档，后面打开的不再覆盖前面的；顶部出现页签栏，
+  // 点谁切谁。每份文档各自记着「看到哪个文件、滚到哪儿」，切回来不丢位置。
+  function docOf(id) {
+    return S.docs.find((d) => d.id === id) || null;
+  }
+
+  function captureView() {
+    const d = docOf(S.activeId);
+    if (!d) return;
+    d.view = {
+      idx: S.idx,
+      // 文件顺序会变（改动被提交掉、新文件加进来、重命名），只记下标不牢靠：
+      // 记下路径，还原时优先按路径找回原来那个文件，找不到才退回下标。
+      path: (curFile() || {}).path || '',
+      open: S.open,
+      hunkIdx: S.hunkIdx,
+      chgIdx: S.chgIdx,
+      lastSel: S.lastSel,
+      scroll: (() => {
+        const b = $('#diffbody');
+        return b ? b.scrollTop : 0;
+      })(),
+      // 光记像素不够：重算后上面可能多了/少了几行（或整个 hunk 变了），同一个像素位置
+      // 会落到另一行上去。所以连「停在文件的第几行」一起记，还原时优先按行锚定。
+      topLine: topVisibleLine(),
+    };
+  }
+
+  function renderTabs() {
+    const bar = $('#tabs');
+    if (!bar) return;
+    // 原生标签模式（宿主默认）：每个 diff 都是 Cursor 自己的标签页，
+    // 页面里再画一排页签就成了「标签套标签」，纯属碍眼 —— 这一行永远不出现。
+    // 切换标签、关标签都由 Cursor 负责（关标签 = 关掉这个面板）。
+    if (S.nativeTabs || S.docs.length < 2) {
+      bar.className = 'hidden';
+      bar.textContent = '';
+      return;
+    }
+    // 只有一份文档时不占那一行（看起来还是原来单笔的样子）；两笔以上才出现页签栏
+    if (S.docs.length < 2) {
+      bar.className = 'hidden';
+      bar.textContent = '';
+      return;
+    }
+    bar.className = '';
+    const frag = document.createDocumentFragment();
+    for (const d of S.docs) {
+      const t = document.createElement('span');
+      t.className = 'tab' + (d.id === S.activeId ? ' active' : '');
+      t.title = `${d.shortSha}  ${d.subject}\n${d.working ? '工作区改动' : '提交'} · 点击切换（x 关闭本页签）`;
+      const sha = document.createElement('span');
+      sha.className = 't-sha';
+      sha.textContent = d.shortSha || '?';
+      const sub = document.createElement('span');
+      sub.className = 't-sub';
+      sub.textContent = d.subject || '';
+      const x = document.createElement('button');
+      x.className = 't-x';
+      x.textContent = '\u2715';
+      x.title = '关闭这个页签（x）';
+      t.append(sha, sub, x);
+      t.addEventListener('click', (e) => {
+        if (e.target === x) { closeDoc(d.id); return; }
+        activateDoc(d.id);
+      });
+      frag.appendChild(t);
+    }
+    bar.textContent = '';
+    bar.appendChild(frag);
+    const act = bar.querySelector('.tab.active');
+    if (act && act.scrollIntoView) act.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
+
+  function activateDoc(id) {
+    if (id === S.activeId) return;
+    const d = docOf(id);
+    if (!d) return;
+    captureView();
+    S.activeId = id;
+    applyDoc(d);
+    renderTabs();
+    vscode.postMessage({ type: 'activateDoc', docId: id });
+  }
+
+  function closeDoc(id) {
+    const i = S.docs.findIndex((d) => d.id === id);
+    if (i < 0) return;
+    const wasActive = S.activeId === id;
+    S.docs.splice(i, 1);
+    vscode.postMessage({ type: 'closeDoc', docId: id });
+    if (!wasActive) { renderTabs(); return; }
+    const next = S.docs[Math.min(i, S.docs.length - 1)];
+    if (!next) {
+      // 最后一份也关了：面板没有可显示的内容，直接关掉（和关掉最后一个编辑器标签一致）
+      S.activeId = null;
+      vscode.postMessage({ type: 'close' });
+      return;
+    }
+    S.activeId = next.id;
+    applyDoc(next);
+    renderTabs();
+  }
+
+  function closeActiveDoc() {
+    if (S.activeId) closeDoc(S.activeId);
+    else vscode.postMessage({ type: 'close' });
+  }
+
+  // 把一份文档的数据铺到「实时视图」上并整体重绘
+  function applyDoc(d) {
+    const c = d.commit || {};
+    const norm = normalizeFiles(c);
+    S.files = norm.files;
+    S.hiddenUnchanged = norm.hiddenUnchanged;
+    S.symbolOnly = Array.isArray(c.symbolOnly) ? c.symbolOnly : [];
+    S.symbolsIgnored = c.symbolsIgnored !== false;
+    const v = d.view || {};
+    // 还原「你刚才在看哪儿」。注意这里必须能撑住「同一份 diff 被重算」这种情况
+    // （按 r 刷新、切 ¶、宿主在文件保存后自动重读）：那种场景下 v 是刚被 captureView
+    // 写进来的当前值，所以位置不会丢；以前只在切换文档时 captureView，于是重算后
+    // v.idx 是 undefined → 被拉回第一个文件、滚回顶部。
+    let idx = -1;
+    if (v.path) idx = S.files.findIndex((x) => x.path === v.path);
+    if (idx < 0) idx = Math.max(0, Math.min(Number(v.idx) || 0, Math.max(0, S.files.length - 1)));
+    S.idx = idx;
+    S.open = v.open !== false;
+    S.hunkIdx = Number(v.hunkIdx) || 0;
+    S.chgIdx = -1;
+    S.changeBlocksCache = null;
+    S.lastSel = null;
     S.delta = c.delta || 0;
-    S.shortSha = c.shortSha || '';
-    S.subject = c.subject || '';
+    S.shortSha = d.shortSha || '';
+    S.subject = d.subject || '';
     S.note = c.note || '';
-    S.isWorking = !!c.working || String(c.sha || '').startsWith(':working:');
+    S.isWorking = !!d.working;
     renderDiag();
     $('#commit-meta').textContent = `${S.shortSha}  ${S.subject}`;
     const sb = [];
     sb.push(`Δ=${S.delta}`);
     sb.push(`+${c.adds} / −${c.dels}`);
     const shown = S.files.length;
-    const total = c.totalFiles || all.length || shown;
+    const total = c.totalFiles || shown;
     sb.push(shown === total ? `${shown} 个文件` : `${shown}/${total} 个文件`);
     if (S.hiddenUnchanged > 0) sb.push(`省略 ${S.hiddenUnchanged} 个无内容变化文件`);
-    if (c.note && String(c.note).trim()) sb.push(String(c.note).trim());
+    if (S.symbolOnly.length) sb.push(`忽略 ${S.symbolOnly.length} 个只差符号/空白的文件`);
+    if (d.working) sb.push('工作区 diff');
     $('#commit-sub').textContent = sb.join('   ·   ');
     showStatus('');
     renderHeader();
     renderList();
     renderDiff();
+    const b = $('#diffbody');
+    if (b) {
+      // 优先按「你刚才停在哪一行」还原（内容变了也不会漂），退回按像素。
+      if (!scrollToLine(Number(v.topLine)) && Number(v.scroll) > 0) b.scrollTop = Number(v.scroll);
+    }
+  }
+
+  function applyCommit(c, hostVersion, docId, nativeTabs) {
+    // 宿主 JS 是旧版时（改了 extension.js 但没 Reload Window），hostVersion 不会来。
+    // panel.html 是每次打开面板时从磁盘现读的，所以只有页面这边能发现这件事 —— 必须主动提示，
+    // 否则「改了没生效」会被误判成「功能没做」。
+    S.staleHost = !hostVersion;
+    S.hostVersion = hostVersion || '';
+    // 宿主把每个 diff 都开成了独立的 Cursor 编辑器标签 → 页面内部不再画页签栏
+    S.nativeTabs = !!nativeTabs;
+    const hb = $('#host-build');
+    if (hb) hb.textContent = hostVersion ? `宿主 ${hostVersion}` : '宿主 旧版(未重载)';
+    const id = String(docId || c.docId || (c.sha ? 'sha:' + c.sha : (c.shortSha || ':unknown:')));
+    // 先把「现在看到的是哪个文件、滚到哪儿」记下来 —— 不管是切文档还是同一个文档重算。
+    // 同一个文档重算（手动 r 刷新 / 切 ¶ / 宿主在存盘后自动重读）也必须保住位置，
+    // 否则 applyDoc 读到的 v.idx 是空的，会把人拉回第一个文件、滚回顶部。
+    captureView();
+    let d = docOf(id);
+    if (!d) {
+      d = { id, view: {} };
+      S.docs.push(d);
+    }
+    d.commit = c;
+    d.shortSha = c.shortSha || '';
+    d.subject = c.subject || '';
+    d.working = !!c.working || String(c.sha || '').startsWith(':working:');
+    S.activeId = id;
+    applyDoc(d);
+    renderTabs();
   }
 
   // ---------- 顶栏 ----------
@@ -950,6 +1639,25 @@
     return { has: true, rows };
   }
 
+  // 「这一行对应工作区文件的第几行」——点行号跳原文时用（见 .ln[data-ln-jump]）。
+  // 新增/上下文行好办，用自己的新行号；**删除行在新文件里没有行号**，这时不能拿旧行号
+  // 去跳（旧行号是「改动前」的坐标系，跳到新文件里会落到错位置），而是取「这段改动消失的位置」：
+  // 优先后面最近的新行号，后面没有（删到文件尾）再退回前面最近的。两边都没有才不给跳。
+  function fillJumpTargets(rows) {
+    let after = null;
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const r = rows[i];
+      if (r.new) { r.jump = Number(r.new); after = r.jump; }
+      else r.jump = after;
+    }
+    let before = null;
+    for (const r of rows) {
+      if (r.new) before = Number(r.new);
+      else if (r.jump == null) r.jump = before;
+    }
+    return rows;
+  }
+
   // 行号列宽度按「本文件出现过的最大行号位数」自适应，短文件列不会白白很宽
   function gutterDigits(hunks) {
     let max = 1;
@@ -961,15 +1669,20 @@
     return String(max).length;
   }
 
-  // ---------- 注释着色（只区分注释 / 代码，不做完整语法高亮） ----------
+  // ---------- 语法着色（Gerrit / CodeMirror default 主题风格） ----------
   // 白底上用灰绿斜体：比正文浅、又不跟新增的绿底抢；红底删除行上同样能认出来。
   // 字符串里的 // 和 http:// 不当注释；跨 hunk 的块注释不跟踪（diff 会跳行，状态会错）。
   function langStyle(path) {
-    const ext = String(path || '').split('.').pop().toLowerCase();
-    const hash = 'py sh bash zsh rb yml yaml toml r pl pm php cmake mk dockerfile gitignore editorconfig ini cfg';
+    const base = String(path || '').split('/').pop().toLowerCase();
+    const ext = base.split('.').pop();
+    const hash = 'py sh bash zsh rb yml yaml toml r pl pm php cmake mk lock service gitignore editorconfig ini cfg';
+    // 靠文件名而不是扩展名认出来的：# 注释的那些（Makefile / CMakeLists.txt / .env …）
+    const hashNames = 'makefile gnumakefile cmakelists.txt dockerfile vagrantfile rakefile gemfile ' +
+      '.bashrc .zshrc .profile .bash_profile .env .gitconfig .editorconfig .npmrc';
     const xml = 'html htm xml svg vue xhtml';
     const sql = 'sql';
     const lua = 'lua';
+    if ((' ' + hashNames + ' ').includes(' ' + base + ' ')) return 'hash';
     if ((' ' + hash + ' ').includes(' ' + ext + ' ') || ext === 'dockerfile') return 'hash';
     if ((' ' + xml + ' ').includes(' ' + ext + ' ')) return 'xml';
     if (ext === sql) return 'sql';
@@ -977,13 +1690,42 @@
     return 'c';
   }
 
-  function splitComments(s, style) {
-    const lineCmt = style === 'hash' ? '#' : (style === 'sql' || style === 'lua') ? '--' : style === 'xml' ? null : '//';
-    const block = style === 'hash' ? null : style === 'xml' ? ['<!--', '-->'] : ['/*', '*/'];
+  // ---------- 语法着色 ----------
+  // 逐行、无状态：diff 的 hunk 会跳行，跨行跟踪状态（比如多行块注释）在 diff 里必然出错，
+  // 所以块注释只按「这一行里成对出现」处理，字符串同理。
+  // 字体族只影响观感，不影响语义 —— 认不出的语言一律按 c 系处理。
+  const KW_WORDS =
+    'auto break case const continue default do else enum extern for goto if inline register restrict ' +
+    'return sizeof static struct switch typedef union volatile while _Bool _Atomic _Static_assert ' +
+    'alignas alignof asm bool complex generic imag noreturn static_assert thread_local typeof ' +
+    'catch class constexpr const_cast decltype delete dynamic_cast explicit export extern false ' +
+    'friend mutable namespace new noexcept nullptr operator override private protected public ' +
+    'reinterpret_cast static_cast template this throw true try typeid typename using virtual ' +
+    'and or not in is None True False self elif except finally from global lambda nonlocal pass ' +
+    'raise with yield as assert async await def import fn impl trait pub mod match loop where ' +
+    'unsafe mut ref crate use super dyn let var function typeof instanceof extends implements ' +
+    'interface package final void throw throws synchronized native transient strictfp';
+  // 常见内置类型名（clangd/CodeMirror 也把它们归到「类型」色）
+  const TYPE_WORDS =
+    'int char short long float double signed unsigned void size_t ssize_t ptrdiff_t wchar_t ' +
+    'int8_t int16_t int32_t int64_t uint8_t uint16_t uint32_t uint64_t intptr_t uintptr_t ' +
+    'FILE bool string String Integer Float Double Object Array Map Set Promise Error List Dict ' +
+    'u8 u16 u32 u64 i8 i16 i32 i64 f32 f64 usize isize str Vec Option Result Box';
+  const KW_SET = new Set(KW_WORDS.split(' '));
+  const TYPE_SET = new Set(TYPE_WORDS.split(' '));
+
+  const ID_START = /[A-Za-z_$]/;
+  const ID_CHAR = /[\w$]/;
+
+  // 返回 [{t, cls}]：cls='' 表示按正文色渲染（调用方用纯文本节点，省节点数）
+  function tokenize(s, style) {
     const out = [];
-    let i = 0;
     let buf = '';
-    const flush = (cmt) => { if (buf) { out.push({ t: buf, cmt: !!cmt }); buf = ''; } };
+    const flush = (cls) => { if (buf) { out.push({ t: buf, cls: cls || '' }); buf = ''; } };
+
+    const hashCmt = style === 'hash' || style === 'sql' || style === 'lua';
+    const lineCmt = style === 'hash' ? '#' : hashCmt ? '--' : style === 'xml' ? null : '//';
+    const block = style === 'hash' ? null : style === 'xml' ? ['<!--', '-->'] : ['/*', '*/'];
     const isLine = (mark, at) => {
       if (!mark || !s.startsWith(mark, at)) return false;
       if (at === 0) return true;
@@ -992,40 +1734,99 @@
       if (mark === '#' || mark === '--') return /\s/.test(prev);
       return true;
     };
+
+    let i = 0;
+    // c 系语言的行首预处理指令：#include / #define / #if…（只把 `#xxx` 染色，后面继续解析）
+    if (style === 'c') {
+      const m = /^(\s*#\s*[A-Za-z_]\w*)/.exec(s);
+      if (m) { out.push({ t: m[1], cls: 'pre' }); i = m[1].length; }
+    }
+
     while (i < s.length) {
-      const q = s[i];
-      if (q === '"' || q === "'" || q === '`') {
-        let j = i + 1;
+      const c = s[i];
+
+      // 字符串 / 字符字面量（转义序列单独染色，Gerrit 也是这样）
+      if (c === '"' || c === "'" || c === '`') {
+        flush('');
+        let j = i + 1;      // 跳过起始引号；start 从引号本身算起
+        let start = i;
         while (j < s.length) {
-          if (s[j] === '\\') { j += 2; continue; }
-          if (s[j] === q) { j++; break; }
+          const ch = s[j];
+          if (ch === '\\') {
+            if (j > start) out.push({ t: s.slice(start, j), cls: 'str' });
+            const esc = s.slice(j, Math.min(s.length, j + 2));
+            out.push({ t: esc, cls: 'esc' });
+            j += esc.length;
+            start = j;
+            continue;
+          }
           j++;
+          if (ch === c) break;   // 收尾引号已经包含在 j 里
         }
-        buf += s.slice(i, j);
+        if (j > start) out.push({ t: s.slice(start, j), cls: 'str' });
         i = j;
         continue;
       }
+
+      // 注释
       if (isLine(lineCmt, i)) {
-        flush(false);
-        out.push({ t: s.slice(i), cmt: true });
+        flush('');
+        out.push({ t: s.slice(i), cls: 'cmt' });
         return out;
       }
       if (block && s.startsWith(block[0], i)) {
+        flush('');
         const end = s.indexOf(block[1], i + block[0].length);
-        flush(false);
         if (end < 0) {
-          out.push({ t: s.slice(i), cmt: true });
+          out.push({ t: s.slice(i), cls: 'cmt' });
           return out;
         }
-        out.push({ t: s.slice(i, end + block[1].length), cmt: true });
+        out.push({ t: s.slice(i, end + block[1].length), cls: 'cmt' });
         i = end + block[1].length;
         continue;
       }
-      buf += s[i];
+
+      // 数字常量
+      if (c >= '0' && c <= '9') {
+        const m = /^(0[xX][0-9a-fA-F_]+|0[bB][01_]+|\d[\d_]*(?:\.[\d_]*)?(?:[eE][+-]?\d+)?)[uUlLfF]*/.exec(s.slice(i));
+        if (m) {
+          flush('');
+          out.push({ t: m[0], cls: 'num' });
+          i += m[0].length;
+          continue;
+        }
+      }
+
+      // 标识符：关键字 / 类型 / 函数 / 成员
+      if (ID_START.test(c)) {
+        let j = i + 1;
+        while (j < s.length && ID_CHAR.test(s[j])) j++;
+        const word = s.slice(i, j);
+        flush('');
+        let cls = '';
+        if (KW_SET.has(word)) cls = 'kw';
+        else if (TYPE_SET.has(word)) cls = 'type';
+        else {
+          // 前面是 . 或 ->  → 成员访问
+          const before = s.slice(0, i).replace(/\s+$/, '');
+          if (before.endsWith('.') || before.endsWith('->')) cls = 'mem';
+          else {
+            // 后面跟 ( → 函数名/调用（控制流关键字已在 KW 里拦下）
+            let k = j;
+            while (k < s.length && (s[k] === ' ' || s[k] === '\t')) k++;
+            if (s[k] === '(') cls = 'fn';
+          }
+        }
+        out.push({ t: word, cls });
+        i = j;
+        continue;
+      }
+
+      buf += c;
       i++;
     }
-    flush(false);
-    return out.length ? out : [{ t: s, cmt: false }];
+    flush('');
+    return out.length ? out : [{ t: s, cls: '' }];
   }
 
   function sourceBodyFromRaw(raw) {
@@ -1060,22 +1861,34 @@
     return Math.max(0, off);
   }
 
-  function lineNumberForJump(lineEl) {
-    const del = lineEl.classList.contains('del');
-    const ln = del ? lineEl.dataset.lnOld : (lineEl.dataset.lnNew || lineEl.dataset.lnOld);
+  // 单页：直接用这一行自己的 old/new 行号；
+  // 双页：按点到的那一侧取（左侧是旧文件的行号，右侧是新文件的行号）。
+  function lineNumberForJump(lineEl, cellEl) {
+    const side = cellEl && cellEl.classList && cellEl.classList.contains('side') ? cellEl : null;
+    let ln;
+    if (side) ln = side.classList.contains('left') ? lineEl.dataset.lnOld : lineEl.dataset.lnNew;
+    else if (lineEl.classList.contains('del')) ln = lineEl.dataset.lnOld;
+    else ln = lineEl.dataset.lnNew || lineEl.dataset.lnOld;
     const n = parseInt(ln, 10);
     return Number.isFinite(n) && n > 0 ? n : null;
+  }
+
+  // 这一行的代码正文：双页里一行左右两半内容不同，取点到的那一半
+  function bodyForJump(lineEl, cellEl) {
+    const raw = (cellEl && cellEl.dataset && cellEl.dataset.raw) || lineEl.dataset.raw || '';
+    return sourceBodyFromRaw(raw);
   }
 
   function requestGoToSymbol(kind, lineEl, codeEl, clientX, clientY) {
     const f = curFile();
     if (!f || !lineEl || !codeEl) return;
-    const lineNo = lineNumberForJump(lineEl);
+    const cellEl = codeEl.closest ? codeEl.closest('.side') : null;
+    const lineNo = lineNumberForJump(lineEl, cellEl);
     if (lineNo == null) {
       toast('这一行没有可对齐的行号');
       return;
     }
-    const body = sourceBodyFromRaw(lineEl.dataset.raw || '');
+    const body = bodyForJump(lineEl, cellEl);
     const doc = codeEl.ownerDocument;
     let col = 0;
     if (doc.caretRangeFromPoint) {
@@ -1111,11 +1924,15 @@
     const line = range.startContainer.nodeType === Node.ELEMENT_NODE
       ? range.startContainer.closest('.hl')
       : range.startContainer.parentElement && range.startContainer.parentElement.closest('.hl');
-    const code = line && line.querySelector('.code');
+    const startEl = range.startContainer.nodeType === Node.ELEMENT_NODE
+      ? range.startContainer
+      : range.startContainer.parentElement;
+    const cell = startEl && startEl.closest ? startEl.closest('.side') : null;
+    const code = (cell ? cell.querySelector('.code') : null) || (line && line.querySelector('.code'));
     if (!line || !code) return;
-    const lineNo = lineNumberForJump(line);
+    const lineNo = lineNumberForJump(line, cell);
     if (lineNo == null) return;
-    const srcBody = sourceBodyFromRaw(line.dataset.raw || '');
+    const srcBody = bodyForJump(line, cell);
     const col = offsetInCodeEl(code, range);
     const id = identifierAtColumn(srcBody, col);
     if (!id) {
@@ -1132,6 +1949,11 @@
     });
   }
 
+  const TOK_CLASS = {
+    cmt: 'cmt', kw: 'tk-kw', type: 'tk-type', num: 'tk-num',
+    str: 'tk-str', fn: 'tk-fn', mem: 'tk-mem', pre: 'tk-pre', esc: 'tk-esc',
+  };
+
   function fillCode(el, raw, path) {
     el.textContent = '';
     if (raw == null || raw === '') return;
@@ -1144,20 +1966,186 @@
       return;
     }
     const body = sourceBodyFromRaw(raw);
-    if (!S.colorComments) {
+    // 两种着色都关掉时走最快路径：整行一个文本节点
+    if (!S.colorComments && !S.syntaxHighlight) {
       el.appendChild(document.createTextNode(body));
       return;
     }
-    for (const p of splitComments(body, langStyle(path))) {
-      if (p.cmt) {
+    for (const p of tokenize(body, langStyle(path))) {
+      // 注释只看 colorComments，其它 token 只看 syntaxHighlight —— 两个开关互不牵连
+      const on = p.cls === 'cmt' ? S.colorComments : S.syntaxHighlight;
+      const cls = on ? p.cls : '';
+      const cn = TOK_CLASS[cls];
+      if (cn) {
         const s = document.createElement('span');
-        s.className = 'cmt';
+        s.className = cn;
         s.textContent = p.t;
         el.appendChild(s);
       } else {
         el.appendChild(document.createTextNode(p.t));
       }
     }
+  }
+
+  // ---------- 行 DOM 构造（单页 / 双页共用） ----------
+  function makeHunkHead(h, hIdx) {
+    const hh = document.createElement('div');
+    hh.className = 'hh' + (hIdx === S.hunkIdx ? ' cur' : '');
+    hh.dataset.h = String(hIdx);
+    hh.textContent = h.header;
+    hh.title = '当前 hunk：无选区按 c 即发送它';
+    return hh;
+  }
+
+  // 一行 = 旧行号 | 新行号 | +/- | 正文
+  function makeLine(r, path, hIdx) {
+    const line = document.createElement('div');
+    line.className = 'hl ' + r.kind;
+    line.dataset.h = String(hIdx);
+    // 渲染时把原始行存一份：行首多了两列行号，textContent 会变成
+    // "7 8 const x = 1" 这种东西，送 Chat 必须用这份干净的原文（见 selectedLines）。
+    line.dataset.raw = r.raw;
+    if (r.old) line.dataset.lnOld = r.old;
+    if (r.new) line.dataset.lnNew = r.new;
+    // 这一行对应新文件的第几行（重算后按行还原滚动位置要用，见 scrollToLine）
+    if (Number.isFinite(r.jump)) line.dataset.lnJump = String(r.jump);
+
+    const oldLn = document.createElement('span');
+    oldLn.className = 'ln ln-old';
+    oldLn.textContent = r.old;
+    const newLn = document.createElement('span');
+    newLn.className = 'ln ln-new';
+    newLn.textContent = r.new;
+    // 行号点击 = 在编辑器里打开这个文件的这一行（精确到行，见 openSourceFile）。
+    // 普通行号列本身没有别的用途，拿它当热区不冲突：点代码区仍是选文字。
+    if (Number.isFinite(r.jump)) {
+      const tip = S.isWorking
+        ? `打开第 ${r.jump} 行（可编辑）`
+        : `打开第 ${r.jump} 行（该提交时的快照，只读）；Alt+点击 = 打开当前工作区文件`;
+      for (const el of [oldLn, newLn]) {
+        el.dataset.lnJump = String(r.jump);
+        el.title = tip;
+      }
+    }
+    const sign = document.createElement('span');
+    sign.className = 'sign';
+    const rc = r.raw && r.raw.length ? r.raw[0] : ' ';
+    if (rc === '+') {
+      sign.textContent = '+';
+      sign.classList.add('add-mark');
+    } else if (rc === '-') {
+      sign.textContent = '−';
+      sign.classList.add('del-mark');
+    } else {
+      sign.textContent = '\u00a0';
+    }
+
+    const code = document.createElement('span');
+    code.className = 'code';
+    fillCode(code, r.raw, path);
+
+    line.appendChild(oldLn);
+    line.appendChild(newLn);
+    line.appendChild(sign);
+    line.appendChild(code);
+    return line;
+  }
+
+  // 把 hunk 的行序列折成「左旧 / 右新」成对的行：
+  // 连续的 `-` 段和 `+` 段按下标配对，多出来的一侧配 null（渲染成空占位）。
+  function sbsRows(rows) {
+    const out = [];
+    let dels = [];
+    let adds = [];
+    let last = null;
+    const flush = () => {
+      const n = Math.max(dels.length, adds.length);
+      for (let k = 0; k < n; k++) out.push({ left: dels[k] || null, right: adds[k] || null });
+      dels = [];
+      adds = [];
+      last = null;
+    };
+    for (const r of rows) {
+      if (r.kind === 'ctx') {
+        flush();
+        out.push({ left: r, right: r });
+      } else if (r.kind === 'nonl') {
+        // "\ No newline at end of file" 跟在上一个 +/- 行所属的那一侧
+        (last === 'add' ? adds : dels).push(r);
+      } else if (r.kind === 'del') {
+        dels.push(r);
+        last = 'del';
+      } else {
+        adds.push(r);
+        last = 'add';
+      }
+    }
+    flush();
+    return out;
+  }
+
+  // 双页里的一侧：行号 + sign + 代码。r 为 null 表示对侧没有对应行 → 空占位。
+  function makeSbsCell(r, side, path) {
+    const cell = document.createElement('span');
+    cell.className = 'side ' + side;
+    const ln = document.createElement('span');
+    ln.className = 'ln ' + (side === 'left' ? 'ln-old' : 'ln-new');
+    const sign = document.createElement('span');
+    sign.className = 'sign';
+    const code = document.createElement('span');
+    code.className = 'code';
+
+    if (!r) {
+      // 空侧也要占住行号/sign 两列，左右代码列才对得齐
+      cell.classList.add('empty');
+      sign.textContent = '\u00a0';
+    } else {
+      const kind = side === 'left' ? (r.kind === 'add' ? 'ctx' : r.kind) : (r.kind === 'del' ? 'ctx' : r.kind);
+      if (kind === 'del') cell.classList.add('del');
+      else if (kind === 'add') cell.classList.add('add');
+      else if (kind === 'nonl') cell.classList.add('nonl');
+      ln.textContent = side === 'left' ? (r.old || '') : (r.new || '');
+      // 双页：两侧的行号都跳同一处（这一对改动在新文件里的位置）。
+      // 左侧是旧行号，直接拿去跳新文件会错位，所以统一用 r.jump。
+      if (Number.isFinite(r.jump)) {
+        ln.dataset.lnJump = String(r.jump);
+        ln.title = S.isWorking
+          ? `打开第 ${r.jump} 行（可编辑）`
+          : `打开第 ${r.jump} 行（该提交时的快照，只读）；Alt+点击 = 打开当前工作区文件`;
+      }
+      const rc = r.raw && r.raw.length ? r.raw[0] : ' ';
+      if (rc === '+') { sign.textContent = '+'; sign.classList.add('add-mark'); }
+      else if (rc === '-') { sign.textContent = '−'; sign.classList.add('del-mark'); }
+      else sign.textContent = '\u00a0';
+      cell.dataset.raw = r.raw;
+      fillCode(code, r.raw, path);
+    }
+    cell.appendChild(ln);
+    cell.appendChild(sign);
+    cell.appendChild(code);
+    return cell;
+  }
+
+  function makeSbsRow(pair, path, hIdx) {
+    const line = document.createElement('div');
+    const L = pair.left;
+    const R = pair.right;
+    const isAdd = !!(R && R.kind === 'add');
+    const isDel = !!(L && L.kind === 'del');
+    line.className = 'hl sbs ' + (isAdd ? 'add' : isDel ? 'del' : 'ctx');
+    line.dataset.h = String(hIdx);
+    if (L && L.old) line.dataset.lnOld = L.old;
+    if (R && R.new) line.dataset.lnNew = R.new;
+    // 这一对改动对应新文件的第几行（重算后按行还原滚动位置要用，见 scrollToLine）
+    const jump = (R && R.jump) || (L && L.jump);
+    if (Number.isFinite(jump)) line.dataset.lnJump = String(jump);
+    // 送 Chat 用的统一格式原文：配对行就是「-旧 +新」两行
+    if (L && R && L.raw !== R.raw) line.dataset.raw = L.raw + '\n' + R.raw;
+    else line.dataset.raw = (L || R).raw;
+
+    line.appendChild(makeSbsCell(L, 'left', path));
+    line.appendChild(makeSbsCell(R, 'right', path));
+    return line;
   }
 
   function renderDiff() {
@@ -1186,6 +2174,16 @@
       if (!S.shortSha) {
         ph.textContent = '还没有收到提交数据。\n\n（面板可能是刚从别的窗口搬过来，数据还没补发）' +
           '\n按 Esc 关闭后重开一次；若总是这样，请看 输出 → Pretty Commit 的日志。';
+      } else if (S.symbolOnly.length) {
+        // 最容易让人误会「工具漏文件」的一种情况，必须写清楚原因和怎么看到它们。
+        // 注意 #placeholder 是 white-space: pre-line —— 缩进会被吃掉，所以用 · 当行首标记。
+        const names = S.symbolOnly.slice(0, 8).map((p) => '· ' + p).join('\n');
+        const more = S.symbolOnly.length > 8 ? `\n…还有 ${S.symbolOnly.length - 8} 个` : '';
+        ph.textContent =
+          `${S.isWorking ? '工作区' : '这个提交'}里 ${S.symbolOnly.length} 个文件只差「符号」：换行符（CRLF/LF）、` +
+          `行尾空白、或文件末尾换行 —— 已按「忽略符号差异」跳过：\n\n${names}${more}` +
+          `\n\n想看这些差异：按 ¶（或把设置 prettyCommit.ignoreSymbolDiffs 改成 false）。` +
+          (S.hiddenUnchanged > 0 ? `\n另有 ${S.hiddenUnchanged} 个文件是纯重命名/仅权限变更。` : '');
       } else if (S.hiddenUnchanged > 0) {
         ph.textContent = `这个提交没有可显示的行级改动：${S.hiddenUnchanged} 个文件都是纯重命名/仅权限变更。` +
           '\n\n（想看全部文件：把设置 prettyCommit.hideUnchangedFiles 关掉）';
@@ -1201,7 +2199,12 @@
 
     ph.classList.add('hidden');
     head.className = '';
-    head.textContent = f.path;
+    head.textContent = '';
+    const pathSpan = document.createElement('span');
+    pathSpan.className = 'dpath';
+    pathSpan.textContent = f.path;
+    pathSpan.title = f.path;
+    head.appendChild(pathSpan);
     const statusSpan = document.createElement('span');
     statusSpan.textContent = STATUS_NAME[f.status] || f.status;
     head.appendChild(statusSpan);
@@ -1218,6 +2221,15 @@
       b.textContent = '[二进制]';
       head.appendChild(b);
     }
+    // 一键跳到原文：在编辑器里打开这个文件（工作区 diff 就是磁盘文件本身；
+    // 历史 commit 是那条历史里的同名文件，对齐当前看到的这一行）。
+    const jump = document.createElement('button');
+    jump.className = 'jump';
+    jump.id = 'btn-jump-src';
+    jump.title = '在编辑器里打开原文（o）';
+    jump.textContent = S.isWorking ? '打开文件 ↗' : '打开文件（当前工作区）↗';
+    jump.addEventListener('click', () => openSourceFile());
+    head.appendChild(jump);
 
     const hunks = f.hunks;
     if (!hunks.length) {
@@ -1231,56 +2243,18 @@
       return;
     }
 
-    body.className = '';
+    body.className = S.sideBySide ? 'sbs-mode' : '';
     body.style.setProperty('--ln-digits', String(gutterDigits(hunks)));
     const frag = document.createDocumentFragment();
     let hIdx = 0;
     for (const h of hunks) {
-      const hh = document.createElement('div');
-      hh.className = 'hh' + (hIdx === S.hunkIdx ? ' cur' : '');
-      hh.dataset.h = String(hIdx);
-      hh.textContent = h.header;
-      hh.title = '当前 hunk：无选区按 c 即发送它';
-      frag.appendChild(hh);
+      frag.appendChild(makeHunkHead(h, hIdx));
       const { rows } = lineNumbers(h);
-      for (const r of rows) {
-        const line = document.createElement('div');
-        line.className = 'hl ' + r.kind;
-        line.dataset.h = String(hIdx);
-        // 渲染时把原始行存一份：行首多了两列行号，textContent 会变成
-        // "7 8 const x = 1" 这种东西，送 Chat 必须用这份干净的原文（见 selectedLines）。
-        line.dataset.raw = r.raw;
-        if (r.old) line.dataset.lnOld = r.old;
-        if (r.new) line.dataset.lnNew = r.new;
-
-        const oldLn = document.createElement('span');
-        oldLn.className = 'ln ln-old';
-        oldLn.textContent = r.old;
-        const newLn = document.createElement('span');
-        newLn.className = 'ln ln-new';
-        newLn.textContent = r.new;
-        const sign = document.createElement('span');
-        sign.className = 'sign';
-        const rc = r.raw && r.raw.length ? r.raw[0] : ' ';
-        if (rc === '+') {
-          sign.textContent = '+';
-          sign.classList.add('add-mark');
-        } else if (rc === '-') {
-          sign.textContent = '−';
-          sign.classList.add('del-mark');
-        } else {
-          sign.textContent = '\u00a0';
-        }
-
-        const code = document.createElement('span');
-        code.className = 'code';
-        fillCode(code, r.raw, f.path);
-
-        line.appendChild(oldLn);
-        line.appendChild(newLn);
-        line.appendChild(sign);
-        line.appendChild(code);
-        frag.appendChild(line);
+      fillJumpTargets(rows); // 给每行算好「点行号跳第几行」（删除行要取消失位置）
+      if (S.sideBySide) {
+        for (const pair of sbsRows(rows)) frag.appendChild(makeSbsRow(pair, f.path, hIdx));
+      } else {
+        for (const r of rows) frag.appendChild(makeLine(r, f.path, hIdx));
       }
       hIdx++;
     }
@@ -1455,7 +2429,7 @@
       return;
     }
     if (mod && e.key !== 'A') return;
-    if (e.repeat && ['n','p','N','P','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','c','b','[',']'].includes(e.key)) return;
+    if (e.repeat && ['n','p','N','P','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','c','b','[',']','r','R'].includes(e.key)) return;
 
     switch (e.key) {
       case 'ArrowRight': case 'n': case 'N':
@@ -1490,6 +2464,27 @@
         e.preventDefault(); break;
       case 'c':
         sendSelection();
+        e.preventDefault(); break;
+      case 's':
+        toggleSideBySide();
+        e.preventDefault(); break;
+      case 'i': // invisibles：换行符 / 行尾空白这类「看不见的字符」差异
+        toggleIgnoreSymbols();
+        e.preventDefault(); break;
+      case 't': // theme：Gerrit 浅色 / 深色 / 跟随编辑器
+        cycleDiffTheme();
+        e.preventDefault(); break;
+      case 'd': // depth：色带深浅（淡 / 标准 / 浓）
+        cycleDiffDepth(e.shiftKey ? -1 : 1);
+        e.preventDefault(); break;
+      case 'o':
+        openSourceFile();
+        e.preventDefault(); break;
+      case 'r': case 'R': // refresh：回 git 重算（别处改过 / 刚存盘 / 刚 git add）；Shift+R 全部标签
+        requestRefresh(e.shiftKey);
+        e.preventDefault(); break;
+      case 'x':
+        closeActiveDoc();
         e.preventDefault(); break;
       case 'A':
         if (e.shiftKey) { vscode.postMessage({ type: 'analyze' }); e.preventDefault(); }
@@ -1666,9 +2661,18 @@
   $('#btn-next-file').addEventListener('click', () => stepFile(1));
   $('#btn-prev-chg').addEventListener('click', () => gotoChange(-1));
   $('#btn-next-chg').addEventListener('click', () => gotoChange(1));
+  $('#btn-sbs').addEventListener('click', () => toggleSideBySide());
+  $('#btn-sym').addEventListener('click', () => toggleIgnoreSymbols());
+  $('#btn-theme').addEventListener('click', (e) => {
+    // Shift+点击 = 切色带深浅；普通点击 = 切主题。一个按钮两个轴向，省一格顶栏。
+    if (e.shiftKey) cycleDiffDepth(1);
+    else cycleDiffTheme();
+  });
   $('#zoom-in').addEventListener('click', () => setZoom(1));
   $('#zoom-out').addEventListener('click', () => setZoom(-1));
   $('#zoom-info').addEventListener('click', () => setZoom(-S.zoom));   // 点百分数复位
+  // 顶栏 ↻：重读 diff。Shift+点 = 所有 diff 标签一起重读（和 r / Shift+R 等价）
+  $('#btn-refresh').addEventListener('click', (e) => requestRefresh(e.shiftKey));
 
   // Ctrl+滚轮缩放（滚轮不带 Ctrl 时照常滚动，不拦）
   document.querySelector('section').addEventListener('wheel', (e) => {
@@ -1682,6 +2686,17 @@
     if (hh && !e.ctrlKey && !e.metaKey && !e.altKey) {
       S.hunkIdx = Number(hh.dataset.h) || 0;
       markCurHunk();
+      return;
+    }
+    // 点行号 = 在编辑器里打开这一行（精确到行）。
+    //   工作区 diff → 磁盘上的真实文件（可编辑）；
+    //   历史 diff   → 该提交那一刻的快照（只读）；
+    //   Alt+点击（历史 diff）→ 放弃快照，直接开当前工作区里的同名文件（想改就得走这条）。
+    // Ctrl/⌘+点行号不处理（行号上没有标识符可解析），让给下面的跳定义逻辑。
+    const ln = e.target.closest('.ln');
+    if (ln && ln.dataset.lnJump && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      openSourceFile({ line: Number(ln.dataset.lnJump), worktree: e.altKey });
       return;
     }
     const code = e.target.closest('.code');
@@ -1727,6 +2742,10 @@
   renderDiff();
   applyZoom();   // 先把缩放/列表恢复成默认值，等 uiState 回来再覆盖
   applyList();
+  applySbs();
+  applySym();
+  applyTheme();        // 先把 diff 区配色定下来（auto = 跟编辑器主题走），再等 uiState 覆盖
+  watchEditorTheme();  // 编辑器换主题时跟着换
   let resizeListTimer = null;
   window.addEventListener('resize', () => {
     clearTimeout(resizeListTimer);

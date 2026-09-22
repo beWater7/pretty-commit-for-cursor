@@ -53,6 +53,10 @@
         "title": "Pretty Commit: 把面板窗口带到前台"
       },
       {
+        "command": "prettyCommit.refresh",
+        "title": "Pretty Commit: 重读当前 diff（内容被改过 / 刚存盘 / 刚 git add）"
+      },
+      {
         "command": "prettyCommit.rebind",
         "title": "Pretty Commit: 修改快捷键…"
       },
@@ -97,7 +101,7 @@
         "prettyCommit.moveToNewWindow": {
           "type": "boolean",
           "default": false,
-          "description": "把面板弹成独立 OS 窗口（执行 workbench.action.moveEditorToNewWindow）。**默认关**：弹出后扩展宿主仍在原窗口，而打开 Chat 是宿主命令，必然把原窗口带到前台、把面板窗口压到后面 —— 两个 OS 窗口同时只能有一个在最前面，这点无解（扩展 API 没有聚焦窗口的能力，只能靠 X11 请求硬抬）。嵌在编辑器里就没有这个问题：面板和 Chat 在同一个窗口，用分栏就能同屏看。打开本项才走弹窗那条路。"
+          "description": "把 diff 面板弹成独立 OS 窗口（workbench.action.moveEditorToNewWindow）。**默认关**：弹出后扩展宿主仍在原窗口，而打开 Chat 是宿主命令，必然把原窗口带到前台、把面板窗口压到后面 —— 两个 OS 窗口同时只能有一个在最前面，这点无解（扩展 API 没有聚焦窗口的能力，扩展只能靠 scripts/x11-raise.py 直接找 X server）。另外：多开 diff 时**只有第一个标签会弹窗**，后来打开的 diff 开在已有标签旁边 —— 否则每开一笔就多一个 OS 窗口，抢焦点很烦。"
         },
         "prettyCommit.recentCommitCount": {
           "type": "number",
@@ -120,17 +124,17 @@
         "prettyCommit.fillEditorArea": {
           "type": "boolean",
           "default": true,
-          "description": "打开提交时把面板所在分栏展开、占满整个编辑区（其它分栏缩到最小，不关闭、也不隐藏侧边栏）。走的是 workbench.action.minimizeOtherEditors（\"Expand Editor Group\"，内部 arrangeGroups(1) → expandView）。注意它只作用于「活动分栏」，所以会先把面板那一栏设为活动栏；只有一栏时该命令本身就是 no-op。关掉则面板只是普通分栏，宽度靠拖分隔条自己调。"
+          "description": "打开提交时把面板所在分栏展开、占满整个编辑区（其它分栏缩到最小，不关闭、也不隐藏侧边栏）。走的是 workbench.action.minimizeOtherEditors（\"Expand Editor Group\"，内部 arrangeGroups(1) → expandView）。注意它只作用于**面板自己那一栏**（靠 vscode.window.tabGroups 按标签文字认出是哪个面板；认不出就不动你的布局），并且只有你分了多个编辑器栏时才有区别（单栏时该命令本身是 no-op）。同一个分栏里其它的 diff 标签不会被关掉，只是别的分栏被压小。"
         },
         "prettyCommit.openBeside": {
           "type": "boolean",
           "default": true,
-          "description": "**只在 fillEditorArea=false 时有意义**：面板开在「旁边分栏」（左代码 / 右 diff）而不是占用当前分栏。fillEditorArea=true（默认）时不切分屏，直接沿用当前分栏再展开，避免留下多余的空分栏。"
+          "description": "**只在 fillEditorArea=false 时有意义**：第一个 diff 面板开在「旁边分栏」（左代码 / 右 diff）而不是占用当前分栏。fillEditorArea=true（默认）时不切分屏，直接沿用当前分栏再展开，避免留下多余的空分栏。后来打开的 diff 一律开在「已有 diff 标签所在的那一栏」（同一栏里的新标签），不再另切分屏。"
         },
         "prettyCommit.chatBesidePanel": {
           "type": "boolean",
           "default": true,
-          "description": "送 Chat 后把 Chat 标签页挪到相邻分栏，使 diff 与 AI 回答同屏可见（用 moveEditorToLeftGroup / moveEditorToRightGroup：bundle 里这两个命令在缺相邻栏时会新建一栏，所以目标栏一定存在）。若面板当前是「展开占满编辑区」的状态，会先恢复等宽再挪，否则新栏会继承展开状态、把面板挤成一条缝。关掉则 Chat 会盖在面板上，需要 Alt+Shift+Q 切回。"
+          "description": "送 Chat 后把 Chat 标签页挪到相邻分栏，使 diff 与 AI 回答同屏可见（用 moveEditorToLeftGroup / moveEditorToRightGroup：bundle 里这两个命令在缺相邻栏时会新建一栏，所以目标栏一定存在）。作用对象是**当前聚焦的那个 diff 标签**所在的分栏；该标签若处于「展开占满编辑区」状态，会先恢复等宽再挪，否则新栏会继承展开状态、变成 Chat 占满而 diff 被挤成一条缝。"
         },
         "prettyCommit.hideUnchangedFiles": {
           "type": "boolean",
@@ -217,7 +221,57 @@
         "prettyCommit.colorComments": {
           "type": "boolean",
           "default": true,
-          "description": "把注释（//、#、/* */、<!-- -->、--）渲染成灰绿斜体，和正文区分。只做注释/代码两色，不做完整语法高亮。"
+          "description": "把注释（//、#、/* */、<!-- -->、--）渲染成灰绿斜体，和正文区分。"
+        },
+        "prettyCommit.syntaxHighlight": {
+          "type": "boolean",
+          "default": true,
+          "description": "Gerrit（CodeMirror default 主题）风格的语法着色：关键字/内置类型/数字常量/字符串/函数名/成员访问各用一色。关掉后 diff 区只剩注释着色，渲染更快。"
+        },
+        "prettyCommit.ignoreSymbolDiffs": {
+          "type": "boolean",
+          "default": true,
+          "description": "忽略「只差不可见符号」的改动：换行符（CRLF↔LF）、行尾空白、文件末尾换行。默认忽略 —— 这类差异多半由编辑器/工具链自动产生，却能把整份文件刷成一大片红绿。刻意不忽略缩进变化（Python/Makefile/YAML 里缩进是语法）。面板顶栏的 ¶ 按钮（快捷键 i）可临时切换，切过之后以面板上的选择为准。注意 Markdown：行尾两个空格是硬换行，看 md 文件时可能要关掉。"
+        },
+        "prettyCommit.refreshOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "文件保存后自动重读当前打开的工作区 diff。diff 是「某一刻」从 git 算出来的快照，你改完存盘之后面板上还是旧内容 —— 打开这个开关，保存即刷新（400ms 防抖）。注意用的是「保存」而不是「输入」：git diff 读的是磁盘内容，敲键盘时它不会变，只有存盘才会。手边没有面板时不会有任何开销（只对已打开的工作区 diff 生效）。"
+        },
+        "prettyCommit.watchGitState": {
+          "type": "boolean",
+          "default": true,
+          "description": "git 状态变化后自动重读工作区 diff：.git/index（终端 / SCM 面板里 git add、reset）与 .git/HEAD（切分支、commit、checkout）一变，面板上「已暂存 / 未暂存」的分档和基线就过期了。优先用内置 git 扩展的 API 监听，拿不到时退回盯这两个文件。只作用于工作区 diff（历史提交的内容不会变），同样 400ms 防抖。"
+        },
+        "prettyCommit.diffIntensity": {
+          "type": "string",
+          "enum": [
+            "subtle",
+            "standard",
+            "strong"
+          ],
+          "enumDescriptions": [
+            "淡：Gerrit 官方那组原色（ADD #D8FED8 / DEL #FFEBEE；深色 #2C553A / #62110F）。铺满整行时偏淡（与底色对比约 1.1），想要 Gerrit 原汁原味选它",
+            "标准（默认）：色相仍是 Gerrit 的，只提了亮度与彩度（浅色 ADD #ADF5AF / DEL #F9D5DB；深色 #25623C / #97211E），色带一眼看得出来。绿红两行的**感知亮度相等**，不会一行重一行轻",
+            "浓：再深一档（浅色 #90F295 / #F8C9D0；深色 #256E42 / #AB1D1C）。深色主题下这档已接近可读性上限，再深就会糊字"
+          ],
+          "default": "standard",
+          "description": "diff 区新增/删除行的色带深浅。三档的色相都钉在 Gerrit 原值上，只改亮度与彩度，用来在「一眼看出改动」和「别太扎眼」之间调。面板顶栏 ◐ 按钮 Shift+点击（快捷键 d）可循环切换，切过之后以面板上的选择为准。\n\n两档加深值不是随手挑的，按三条约束解出来：\n· 绿行与红行的**感知亮度（OKLab L）相等** —— 曾按「各自的对比度」调过一版，结果红色被压得比绿重得多（1.32 / 2.11），红行一片荧光、整体很脏；\n· 彩度按各自官方的 C **等比**放大（官方绿 C 本来就是红的约 2.9 倍），保住 Gerrit 自己的红绿平衡；\n· 色带上的正文对比 ≥ 4.5，这是加深的上限 —— 三档都满足。"
+        },
+        "prettyCommit.diffTheme": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "light",
+            "dark"
+          ],
+          "enumDescriptions": [
+            "跟随编辑器主题：编辑器是深色就用 Gerrit Dark，浅色就用 Gerrit Light（默认）",
+            "固定 Gerrit Light（白底）",
+            "固定 Gerrit Dark（#202124 底）"
+          ],
+          "default": "auto",
+          "description": "diff 区的配色主题。底/正文/注释基线取自 Gerrit 官方色板；语法 token（关键字/类型/数字/字符串/函数名）用的是一套更克制的柔和配色，不是 Gerrit 那套高饱和的 CodeMirror 色 —— 后者铺在绿/红加色带上会和底色打架。绿红行色另由 prettyCommit.diffIntensity 决定深浅。auto 会跟着编辑器换主题实时切换。面板顶栏的 ◐ 按钮（快捷键 t）可循环切换，切过之后以面板上的选择为准。只影响 diff 区，顶栏/文件列表始终跟 VS Code 主题。"
         },
         "prettyCommit.focusWindow": {
           "type": "string",
@@ -230,7 +284,7 @@
             "不尝试置前。面板窗口可能生成在其它窗口后面，用 Alt+Shift+Q 手动叫回"
           ],
           "default": "auto",
-          "description": "「把弹出的面板窗口带到前台」的实现方式。仅在面板真的弹成独立窗口时有意义。"
+          "description": "「把弹出的面板窗口带到前台」的实现方式。仅在面板真的弹成独立 OS 窗口时有意义。auto（默认）= Linux/X11 下调用 scripts/x11-raise.py 发 EWMH _NET_ACTIVE_WINDOW（只用 python3 标准库 + 系统 libX11）；其它平台/会话下自动跳过。off = 完全不做置前尝试。多开弹窗时每个标签各自记自己的窗口 id。"
         }
       }
     }

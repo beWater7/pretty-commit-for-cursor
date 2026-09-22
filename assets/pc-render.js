@@ -110,14 +110,40 @@ const LIGHT_VARS = `<style>
 </style>
 `;
 
-function page(light) {
+// 深色主题变量（模拟 VS Code Dark+）。除了让外壳是深色，diff 区的配色现在也靠它决定：
+// applyTheme() 读 --vscode-editor-background 的亮度 → 深色编辑器自动用 Gerrit Dark。
+const DARK_VARS = `<style>
+  :root {
+    --vscode-editor-background: #1e1e1e;
+    --vscode-editor-foreground: #d4d4d4;
+    --vscode-descriptionForeground: #9d9d9d;
+    --vscode-panel-border: #2b2b2b;
+    --vscode-editorWidget-background: #252526;
+    --vscode-list-activeSelectionBackground: #04395e;
+    --vscode-button-background: #0e639c;
+    --vscode-button-secondaryBackground: #3a3d41;
+    --vscode-button-secondaryForeground: #cccccc;
+    --vscode-charts-green: #89d185;
+    --vscode-charts-red: #f14c4c;
+    --vscode-notifications-background: #252526;
+    --vscode-notifications-foreground: #cccccc;
+    --vscode-errorForeground: #f48771;
+  }
+</style>
+`;
+
+// sbs=true 时先派发一条 uiState（面板 applyUi 认这个），把双页打开再灌 commit ——
+// 这样「双页对比」这张预览图也是可复现的，不用手改 S.sideBySide。
+function page(light, sbs) {
   let html = panel;
-  html = html.replace('</head>', (light ? LIGHT_VARS : '') + '</head>');
+  html = html.replace('</head>', (light ? LIGHT_VARS : DARK_VARS) + '</head>');
   html = html.replace(/<script>/, STUB + '<script>');
   // 末尾（IIFE 之后）派发消息
+  const ui = sbs ? `window.dispatchEvent(new MessageEvent('message', { data: { type: 'uiState', ui: { sideBySide: true } } }));` : '';
   const tail = `<script>
   (function () {
     window.dispatchEvent(new MessageEvent('message', { data: { type: 'hostBuild', hostVersion: 'preview' } }));
+    ${ui}
     window.dispatchEvent(new MessageEvent('message', { data: { type: 'commit', commit: ${JSON.stringify(commit)}, hostVersion: 'preview' } }));
   })();
   </script>
@@ -128,7 +154,9 @@ function page(light) {
 
 const outDir = path.join(os.tmpdir(), 'pcview-out');
 fs.mkdirSync(outDir, { recursive: true });
-fs.writeFileSync(path.join(outDir, 'dark.html'), page(false));
-fs.writeFileSync(path.join(outDir, 'light.html'), page(true));
+fs.writeFileSync(path.join(outDir, 'dark.html'), page(false, false));
+fs.writeFileSync(path.join(outDir, 'light.html'), page(true, false));
+fs.writeFileSync(path.join(outDir, 'dark-sbs.html'), page(false, true));
+fs.writeFileSync(path.join(outDir, 'light-sbs.html'), page(true, true));
 console.log('页面已生成:', outDir);
 console.log('files:', files.map((f) => `${f.path}(${f.status} +${f.added}/-${f.deleted}, hunks=${f.hunks.length})`).join('\n        '));
