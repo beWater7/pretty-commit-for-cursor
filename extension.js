@@ -1653,6 +1653,11 @@ async function onMessage(p, msg) {
       if (mine) setActiveDoc(mine.id);
       await handleOpenSource(p, msg);
       break;
+    case 'fileBlob':
+      // 面板要在 hunk 缝里展开省略的源码：把该文件新旧两侧全文给它。
+      if (mine) setActiveDoc(mine.id);
+      await handleFileBlob(p, msg);
+      break;
     case 'activateDoc': {
       // 老页面（还画着内部页签栏）才会发这条；原生标签模式下页面自己就不会有页签栏
       const d = setActiveDoc(msg.docId);
@@ -1934,6 +1939,77 @@ async function handleOpenSource(p, msg) {
   );
 }
 
+// 面板要把 hunk 之间省略的源码补进 diff：把该文件「旧侧 / 新侧」全文送回去。
+// 为什么不把 --unified 调大：那会让一笔 commit 里每个文件都膨胀，再撞上每文件 6000 行截断。
+// 只在用户点「展开」时按文件取，默认仍然是 --unified=3 的改动岛。
+// 坐标系必须跟这份 diff 的两侧对齐，不能一律读磁盘：
+//   工作区 all      新=磁盘  旧=HEAD
+//   工作区 unstaged 新=磁盘  旧=暂存区（:path）
+//   工作区 staged   新=暂存区 旧=HEAD     —— 磁盘可能还有未暂存改动，读它会把不在这份 diff 里的行画进去
+//   历史 commit     新=该提交 旧=第一父提交（重命名用 oldPath）
+const MAX_EXPAND_BYTES = 1.5 * 1024 * 1024;
+
+async function tryReadGitBlob(repoRoot, rev, filePath) {
+  try {
+    return await git.readBlob(repoRoot, rev, filePath);
+  } catch {
+    return '';
+  }
+}
+
+function readWorktreeUtf8(full) {
+  if (!full || !fs.existsSync(full)) return '';
+  const st = fs.statSync(full);
+  if (st.size > MAX_EXPAND_BYTES) {
+    throw new Error(`文件太大（${Math.round(st.size / 1024)}KB），不能整份塞进 diff`);
+  }
+  return fs.readFileSync(full, 'utf8');
+}
+
+async function handleFileBlob(p, msg) {
+  const d = docOfPanel(p) || activeDoc();
+  const rel = String((msg && msg.path) || '').replace(/\\/g, '/');
+  const fail = (error) => {
+    warn(`取原文失败 ${rel}: ${error}`);
+    post(p, { type: 'fileBlob', path: rel, error: String(error) });
+  };
+  if (!d || !d.repoRoot || !rel) return fail('不知道该取哪个仓库的文件');
+  const oldPath = String((msg && msg.oldPath) || rel).replace(/\\/g, '/');
+  let newText = '';
+  let oldText = '';
+  try {
+    if (d.data && d.data.working) {
+      const kind = workingKindOf(d);
+      const disk = path.join(d.repoRoot, rel);
+      if (kind === 'staged') {
+        newText = await tryReadGitBlob(d.repoRoot, '', rel);
+        oldText = await tryReadGitBlob(d.repoRoot, 'HEAD', oldPath);
+      } else if (kind === 'unstaged') {
+        newText = readWorktreeUtf8(disk);
+        oldText = await tryReadGitBlob(d.repoRoot, '', oldPath);
+      } else {
+        newText = readWorktreeUtf8(disk);
+        oldText = await tryReadGitBlob(d.repoRoot, 'HEAD', oldPath);
+      }
+    } else {
+      const sha = d.data && d.data.sha;
+      if (!sha) return fail('这份 diff 还没有提交号');
+      newText = await tryReadGitBlob(d.repoRoot, sha, rel);
+      const parent = d.data.parents && d.data.parents[0];
+      if (parent) oldText = await tryReadGitBlob(d.repoRoot, parent, oldPath);
+    }
+  } catch (e) {
+    return fail(e.message);
+  }
+  const bytes = Buffer.byteLength(newText, 'utf8') + Buffer.byteLength(oldText, 'utf8');
+  if (bytes > MAX_EXPAND_BYTES) {
+    return fail(`文件太大（${Math.round(bytes / 1024)}KB），不能整份塞进 diff`);
+  }
+  if (newText.includes('\0') || oldText.includes('\0')) return fail('二进制文件不能展开');
+  info(`原文 ${rel}：新 ${newText.length} 字 / 旧 ${oldText.length} 字`);
+  post(p, { type: 'fileBlob', path: rel, newText, oldText });
+}
+
 async function addSelectionFromPanel() {
   const p = activePanel(); // 快捷键作用在「当前聚焦的那个 diff 标签」上
   if (!p || !panelAlive(p) || !current) {
@@ -2021,8 +2097,9 @@ async function attachDocToChat(doc, label, allowNewComposer) {
 async function addSelectionToChat(p, sel) {
   // 送 Chat 用的上下文必须是「发出这个动作的那个标签」的 diff，
   // 而不是碰巧最后获得焦点的那个（onMessage 里已经先把 active 切过来了）。
-  const d = (docOfPanel(p) || activeDoc());
-  if (!d || !sel || !sel.text || !sel.text.trim()) return;
+  const slot = docOfPanel(p) || activeDoc();
+  const d = commitOf(slot);
+  if (!slot || !d || !sel || !sel.text || !sel.text.trim()) return;
 
   // 去重：面板内 Ctrl+L 与清单快捷键可能同时命中，8 秒内同一段只处理一次
   const sig = `${sel.path || ''}\u0000${sel.text}`;
@@ -2206,8 +2283,9 @@ async function openChatWithText(text) {
 // 这套链路依赖 Cursor 内部命令，且 addCodeSelections* 在 composer 没加载好时是**静默 no-op**
 // （不抛错）。所以：无论成败都把完整文本写进剪贴板兜底，用户 Ctrl+V 就能补救。
 async function sendAnalysisToChat(p, { question, diffText, docPath, docHeader, fullText, label }) {
-  const d = (docOfPanel(p) || activeDoc());
-  if (!d) return;
+  const slot = docOfPanel(p) || activeDoc();
+  const d = commitOf(slot);
+  if (!slot || !d) return;
 
   // 1) 开 chat，把短提问填进输入框（同时保证 composer 已加载、被选中）
   const opened = await openChatWithText(question);
@@ -2266,12 +2344,31 @@ async function confirmLargeCode(headline, detail) {
   return picked === '继续分析';
 }
 
+// 分析要的是 git 算出来的那份 commit，不是文档槽本身。
+// 文档槽是 { id, rev, data, panel… }，文件列表在 data.files；拿错一层就会
+// 「没找到这个文件（列表可能已变化）」—— 列表没变，只是找错抽屉了。
+function commitOf(d) {
+  return d && d.data ? d.data : null;
+}
+
+function findCommitFile(commit, filePath) {
+  const rel = String(filePath || '').replace(/\\/g, '/');
+  if (!commit || !rel) return null;
+  const files = commit.files || [];
+  return files.find((f) => f.path === rel || f.oldPath === rel) || null;
+}
+
 // 整笔 commit 分析（for what / why）
 async function requestWhole(p) {
   // 分析的是「这个标签里显示的 diff」，不是碰巧最后聚焦的那一个
   const d = docOfPanel(p) || activeDoc();
+  const commit = commitOf(d);
   if (!p || !d || busy) return;
-  if (!d.files.length && !d.totalFiles) {
+  if (!commit) {
+    flash(p, '这份 diff 还在读取，稍后再试');
+    return;
+  }
+  if (!(commit.files || []).length && !commit.totalFiles) {
     flash(p, '这个提交没有可分析的改动');
     return;
   }
@@ -2279,12 +2376,12 @@ async function requestWhole(p) {
   busy = true;
   post(p, { type: 'busy', value: true });
   try {
-    const { text, question, diffText, lines } = ai.buildWholeText(d);
+    const { text, question, diffText, lines } = ai.buildWholeText(commit);
     const threshold = cfgNum('wholePromptDelta', 1000);
-    if (d.delta > threshold) {
+    if (commit.delta > threshold) {
       const { lo, hi } = ai.estimateTokens(text);
       const ok = await confirmLargeCode(
-        `代码量较大：整笔改动 Δ=${d.delta} 行、${d.totalFiles || d.files.length} 个文件。`,
+        `代码量较大：整笔改动 Δ=${commit.delta} 行、${commit.totalFiles || commit.files.length} 个文件。`,
         `会把截断后的约 ${lines} 行作为「上下文芯片」挂上（不是塞进输入框）。预计分析数十秒到数分钟，` +
           `大约消耗 ${ai.fmtToken(lo)}–${ai.fmtToken(hi)} Token（按截断后文本粗算，非账单精确值）。`
       );
@@ -2296,10 +2393,10 @@ async function requestWhole(p) {
     await sendAnalysisToChat(p, {
       question,
       diffText,
-      docPath: `commit-${d.shortSha}.diff`,
-      docHeader: `# 提交 ${d.shortSha}  ${d.subject}（整笔 unified diff，非工作区当前内容）`,
+      docPath: `commit-${commit.shortSha}.diff`,
+      docHeader: `# 提交 ${commit.shortSha}  ${commit.subject}（整笔 unified diff，非工作区当前内容）`,
       fullText: text,
-      label: `whole ${d.shortSha}`,
+      label: `whole ${commit.shortSha}`,
     });
   } finally {
     busy = false;
@@ -2310,17 +2407,23 @@ async function requestWhole(p) {
 // 单文件分析：只针对当前选中的那个文件
 async function requestFile(p, filePath) {
   const d = docOfPanel(p) || activeDoc();
+  const commit = commitOf(d);
   if (!p || !d || busy) return;
-  const file = (d.files || []).find((f) => f.path === filePath);
+  if (!commit) {
+    flash(p, '这份 diff 还在读取，稍后再试');
+    return;
+  }
+  const file = findCommitFile(commit, filePath);
   if (!file) {
-    flash(p, '没找到这个文件（列表可能已变化）');
+    warn(`单文件分析找不到 ${filePath}（这份 diff 有 ${(commit.files || []).length} 个文件）`);
+    flash(p, `没找到 ${filePath || '这个文件'}（这份 diff 里没有它）`);
     return;
   }
 
   busy = true;
   post(p, { type: 'busy', value: true });
   try {
-    const { text, question, diffText, lines, diffLines } = ai.buildFileText(d, file);
+    const { text, question, diffText, lines, diffLines } = ai.buildFileText(commit, file);
     const threshold = cfgNum('filePromptLines', 500);
     if (diffLines > threshold) {
       const { lo, hi } = ai.estimateTokens(text);
@@ -2393,6 +2496,10 @@ module.exports = {
     refreshOnSaveEnabled,
     watchGitStateEnabled,
     handleOpenSource, // 「跳原文」三层兜底（见 openViaWorkbench 注释）
+    handleFileBlob,   // hunk 缝展开：把新旧两侧原文交给面板
+    requestFile,
+    findCommitFile,
+    commitOf,
     readUiState,
     saveUiState,
     resetDocs: () => {

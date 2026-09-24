@@ -966,7 +966,7 @@ function sectionM() {
   ok(/case 'r': case 'R':/.test(html), 'r / R 快捷键接了重读');
   ok(/requestRefresh\(e\.shiftKey\)/.test(html), 'Shift 决定「只重读当前」还是「全部重读」');
   ok(/id="btn-refresh"/.test(html) && /\$\('#btn-refresh'\)\.addEventListener\('click'/.test(html), '顶栏 ↻ 按钮存在且接了点击');
-  ok(/'r','R'\]\.includes\(e\.key\)/.test(html), '按住不放不会连发一堆 git 重算');
+  ok(/'r','R','e','E'\]\.includes\(e\.key\)/.test(html), '按住不放不会连发一堆 git 重算 / 展开');
   ok(/点行号 跳到该行/.test(html) && /<kbd>r<\/kbd> 重读 diff/.test(html), '底栏写了这两个新交互');
 
   // ---- M4 重读后必须保住「你在看哪个文件、滚到哪儿」 ----
@@ -974,8 +974,8 @@ function sectionM() {
   // 被重算（按 r / 切 ¶ / 宿主自动重读）时 d.view 里没有 idx，applyDoc 就把人拉回
   // 第一个文件、滚回顶部。
   ok(
-    /captureView\(\);\s*\n\s*let d = docOf\(id\);/.test(html),
-    'applyCommit：收到新数据前**无条件**先 captureView（同一文档重算也保住位置）'
+    /captureView\(\);\s*\n\s*clearBlobsFor\(id\);/.test(html) && /let d = docOf\(id\);/.test(html),
+    'applyCommit：收到新数据前**无条件**先 captureView（同一文档重算也保住位置），再清原文缓存'
   );
   ok(
     !/if \(S\.activeId && S\.activeId !== id\) captureView\(\);/.test(html),
@@ -1032,7 +1032,7 @@ function sectionM() {
   // dataset.lnJump 落到 DOM 上（写错一个作用域就是整页白屏）。这里配一个迷你 DOM
   // 把这三个函数真跑一遍 —— 相当于把「点行号能不能用」这条链路的最后一环也钉住。
   const r0 = html.indexOf('function makeLine(');
-  const r1 = html.indexOf('function renderDiff()', r0);
+  const r1 = html.indexOf('function renderDiff(', r0);
   if (r0 < 0 || r1 < 0) throw new Error('抠不出 makeLine / makeSbsRow，panel.html 结构变了？');
   const renderSrc = html.slice(r0, r1);
 
@@ -1114,6 +1114,71 @@ function sectionM() {
 sectionK();
 sectionL();   // [L] 定义在前、这里才跑，保证 [I]→[J]→[K]→[L] 的输出顺序
 sectionM();
+
+console.log('\n[O] hunk 缝展开：行号切片 + 上下文行（不改动左侧文件折叠）');
+{
+  const o0 = html.indexOf('function fillJumpTargets(rows)');
+  const o1 = html.indexOf('function langStyle(', o0);
+  if (o0 < 0 || o1 < 0) throw new Error('抠不出展开用的函数，panel.html 结构变了？');
+  const expandSrc = html.slice(o0, o1);
+  const {
+    parseHunkSpan,
+    hunkGaps,
+    gapLineCount,
+    ctxRowsForGap,
+    splitSourceLines,
+  } = new Function(expandSrc + '\nreturn { parseHunkSpan, hunkGaps, gapLineCount, ctxRowsForGap, splitSourceLines };')();
+
+  const many = filesOf('HEAD').get('many.txt');
+  ok(!!many && many.hunks.length === 2, `many.txt 是两段改动岛（实际 ${many && many.hunks.length}）`);
+  const s0 = parseHunkSpan(many.hunks[0].header);
+  const s1 = parseHunkSpan(many.hunks[1].header);
+  ok(s0 && s0.newStart === 1, `第一段从新文件第 1 行起（unified=3 会带上文件头，实际 ${s0 && s0.newStart}）`);
+  ok(s1 && s1.newStart >= 50, `第二段在文件后部（实际起点 ${s1 && s1.newStart}）`);
+
+  const oldLines = manyLines;
+  const newLines = many2;
+  const gaps = hunkGaps(many.hunks, oldLines.length, newLines.length);
+  const mid = gaps.find((g) => g.id === '0-1');
+  ok(!!mid, `两段之间有一条缝（缝 id：${gaps.map((g) => g.id).join(',')}）`);
+  ok(!gaps.some((g) => g.id === 'head'), '第一段贴着文件头 → 没有文件头缝');
+  const tail = gaps.find((g) => g.id === 'tail');
+  ok(!!tail && tail.newTo === 60, `文件末尾还有缝，接到第 60 行（实际 ${tail && tail.newTo}）`);
+
+  const nMid = gapLineCount(mid);
+  ok(nMid > 10, `中间缝超过 unified=3 的 3 行上下文（实际 ${nMid}）`);
+  const rows = ctxRowsForGap(mid, oldLines, newLines);
+  ok(rows.length === nMid, `切片行数 = 缝的行数（${rows.length}）`);
+  ok(rows.every((r) => r.kind === 'ctx' && r.raw[0] === ' '), '缝里全是上下文（行首空格，送 Chat 才合法）');
+  ok(rows[0].old === String(mid.oldFrom) && rows[0].new === String(mid.newFrom), '第一行两侧行号对齐缝的起点');
+  ok(rows[0].jump === mid.newFrom, '展开行也能点行号跳（jump = 新行号）');
+  const text0 = rows[0].raw.slice(1);
+  ok(text0 === newLines[mid.newFrom - 1], `正文来自新侧原文第 ${mid.newFrom} 行（${JSON.stringify(text0)}）`);
+
+  const noLen = hunkGaps(many.hunks, 0, 0);
+  ok(!noLen.some((g) => g.id === 'tail'), '还没拿到全文长度时不猜文件末尾（避免假缝）');
+
+  const fresh = filesOf('HEAD~3').get('fresh.txt') || filesOf('HEAD~2').get('fresh.txt');
+  // fresh 是纯新增：一个从 +1 起的 hunk，没有缝
+  const addFiles = parseCommitDiff(git('show', '--format=', 'HEAD~3'));
+  const freshF = addFiles.find((x) => x.path === 'fresh.txt') || parseCommitDiff(git('show', '--format=', 'HEAD~2')).find((x) => x.path === 'fresh.txt');
+  if (freshF) {
+    ok(hunkGaps(freshF.hunks, 0, 10).length === 0, '纯新增文件没有可展开的缝（全文已经在 diff 里）');
+  }
+
+  ok(splitSourceLines('a\nb\n').length === 2 && splitSourceLines('a\nb').length === 2, '原文按行切开：末尾换行不另算一行');
+  ok(splitSourceLines('').length === 0, '空文件 0 行');
+
+  ok(/class="hx"/.test(html) || /\.hx \{/.test(html), '展开条用 .hx，不是 .hh（不进 hunk 导航）');
+  ok(/hx-open/.test(html), '展开后条还在（hx-open），才能点回去');
+  ok(/function closeGap\(/.test(html), '单条缝能单独收起');
+  ok(/anyGapOpen\(f\)/.test(html), '头上的「收起」认单条缝，不只认全文');
+  ok(/renderDiff\(\{ keepScroll: true \}\)/.test(html), '展开/收起不把滚动甩回文件头');
+  ok(/case 'e':/.test(html) && /toggleExpandAll/.test(html), 'e = 展开/收起切换');
+  ok(/case 'E':/.test(html), 'E = 收起上下文（左侧再点文件的折叠不绑这件事）');
+  ok(/btn-expand-all/.test(html) && /收起上下文/.test(html), 'diff 头上有展开/收起按钮');
+  ok(/if \(i === S\.idx\) \{ S\.open = !S\.open/.test(html), '左侧再点当前文件仍然是收起整份 diff，没被改成展开源码');
+}
 
 console.log(fails === 0 ? '\n全部通过' : `\n${fails} 项失败`);
 process.exit(fails === 0 ? 0 : 1);

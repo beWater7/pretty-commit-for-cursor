@@ -171,7 +171,9 @@ async function loadCommit(repoRoot, rev, opts) {
 // 「一键跳原文」在历史 commit 下用它：磁盘上的文件可能早就变了，只有这份快照
 // 和面板里显示的行号是一一对应的。文件在该提交里不存在（新增/删除/重命名）时抛错。
 async function readBlob(repoRoot, rev, filePath) {
-  const text = await runGit(repoRoot, ['show', `${rev}:${filePath}`]);
+  // rev 空串 = 暂存区（`git show :path`）；否则 `git show <rev>:<path>`。
+  const spec = rev === '' || rev == null ? `:${filePath}` : `${rev}:${filePath}`;
+  const text = await runGit(repoRoot, ['show', spec]);
   return text;
 }
 

@@ -16,6 +16,9 @@
     --del-bg: rgba(248, 81, 73, 0.15);
     --hh-bg: rgba(0, 127, 255, 0.12);
     --hh-fg: var(--vscode-textLink-foreground, #4daafc);
+    --chg: #4daafc;
+    --hx-bg: rgba(77, 170, 252, 0.14);
+    --hx-bg-hover: rgba(77, 170, 252, 0.26);
     --mono: var(--vscode-editor-font-family, ui-monospace, Menlo, Consolas, monospace);
     --sel: var(--vscode-list-activeSelectionBackground, #04395e);
   }
@@ -266,6 +269,8 @@
     --ln-fg: #5f6368;
     --gutter-bg: #f8f9fa;      /* 上下文行的行号列：比正文略暗，把 gutter 和代码分层 */
     --chg: #1967d2;            /* 当前改动点：Gerrit Type 蓝 */
+    --hx-bg: rgba(25, 103, 210, 0.10);
+    --hx-bg-hover: rgba(25, 103, 210, 0.20);
     --flash-bg: #ffec8b;       /* 跳到改动点闪高 */
     --cmt: #6e7781;            /* Comment（正文/白底行）*/
     /* 语法 token：柔和配色（不是 Gerrit 那套高饱和的 CodeMirror 色 —— 那套铺在绿/红
@@ -293,6 +298,8 @@
     --ln-fg: #9aa0a6;
     --gutter-bg: #292a2d;
     --chg: #75a5ff;            /* 当前改动点：Gerrit Dark Function title 蓝 */
+    --hx-bg: rgba(117, 165, 255, 0.14);
+    --hx-bg-hover: rgba(117, 165, 255, 0.26);
     --flash-bg: #6b5a1e;
     --cmt: #8b949e;            /* Comment（正文/白底行）*/
     /* 语法 token：柔和配色（同浅色那套的深色版）*/
@@ -535,6 +542,40 @@
     cursor: pointer;
   }
   .hh.cur { outline: 1px solid var(--hh-fg); }
+  /* hunk 缝：要跟 @@ 头、普通上下文都分得开。用改动点那支蓝当强调色。 */
+  .hx {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 0;
+    line-height: 1.6;
+    margin: 2px 8px;
+    padding: 1px 8px;
+    font-size: 11px;
+    cursor: pointer;
+    user-select: none;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--chg);
+    background: var(--hx-bg);
+    border: 1px dashed var(--chg);
+    border-radius: 3px;
+  }
+  .hx:hover { background: var(--hx-bg-hover); }
+  .hx.hx-open {
+    /* 展开后条还在，才能点回去；稍微收一点，别压过源码 */
+    font-weight: 500;
+    border-style: solid;
+    opacity: 0.92;
+  }
+  .hx .hx-ico { font-size: 10px; line-height: 1; }
+  .hx .hx-n { font-weight: 700; font-variant-numeric: tabular-nums; }
+  #diffhead button.hx-btn {
+    color: var(--chg);
+    border: 1px solid var(--chg);
+    font-weight: 600;
+  }
   /* ---- 双页对比（左旧右新）----
      一行仍然是一个 .hl，里面左右两个 .side；这样改动块导航 / 选区 / 送 Chat
      这些按行工作的逻辑一行都不用改。两侧各占 50%，长行走折行（不裁切，信息不丢）。 */
@@ -733,6 +774,7 @@ document.body.classList.add('i-standard');
     <span><kbd>s</kbd> 双页对比</span>
     <span>点行号 跳到该行 · <kbd>o</kbd> 打开原文</span>
     <span><kbd>r</kbd> 重读 diff</span>
+    <span><kbd>e</kbd> 展开全文 · <kbd>E</kbd> 收起上下文</span>
     <span><kbd>Ctrl</kbd>+点击 定义 · <kbd>Alt</kbd>+点击 引用</span>
     <span><kbd>Shift</kbd>+<kbd>A</kbd> 整笔分析</span>
     <span><kbd>Shift</kbd>+<kbd>F</kbd> 本文件分析</span>
@@ -855,6 +897,7 @@ document.body.classList.add('i-standard');
     isWorking: false, // 工作区 diff：行号与磁盘文件一致；历史 commit 跳转可能对不齐
     changeBlocksCache: null, // renderDiff 后缓存改动块，避免 ↑↓ 反复扫 DOM
     chgMarkedEls: [],       // 当前高亮的改动行，markChange 只清这些而不 querySelectorAll
+    blobs: {},              // `${docId}:${path}` → { newLines, oldLines }；展开 hunk 缝用
   };
 
   // ---------- 缩放 ----------
@@ -1279,6 +1322,9 @@ document.body.classList.add('i-standard');
       case 'toast':
         toast(m.text);
         break;
+      case 'fileBlob':
+        onFileBlob(m);
+        break;
     }
   });
 
@@ -1325,6 +1371,8 @@ document.body.classList.add('i-standard');
   function captureView() {
     const d = docOf(S.activeId);
     if (!d) return;
+    // expand 记在 view 上：重读 / 切文件之后，已经展开的缝不要自动合上。
+    const expand = (d.view && d.view.expand) || {};
     d.view = {
       idx: S.idx,
       // 文件顺序会变（改动被提交掉、新文件加进来、重命名），只记下标不牢靠：
@@ -1334,6 +1382,7 @@ document.body.classList.add('i-standard');
       hunkIdx: S.hunkIdx,
       chgIdx: S.chgIdx,
       lastSel: S.lastSel,
+      expand,
       scroll: (() => {
         const b = $('#diffbody');
         return b ? b.scrollTop : 0;
@@ -1342,6 +1391,147 @@ document.body.classList.add('i-standard');
       // 会落到另一行上去。所以连「停在文件的第几行」一起记，还原时优先按行锚定。
       topLine: topVisibleLine(),
     };
+  }
+
+  function expandMap() {
+    const d = docOf(S.activeId);
+    if (d) {
+      if (!d.view) d.view = {};
+      if (!d.view.expand) d.view.expand = {};
+      return d.view.expand;
+    }
+    return S._expand || (S._expand = {});
+  }
+
+  function fileExpand(filePath) {
+    const map = expandMap();
+    const k = filePath || '';
+    if (!map[k]) map[k] = { full: false, ids: {} };
+    if (!map[k].ids) map[k].ids = {};
+    return map[k];
+  }
+
+  function blobKey(filePath) {
+    return String(S.activeId || '') + ':' + String(filePath || '');
+  }
+
+  function getBlob(filePath) {
+    return S.blobs[blobKey(filePath)] || null;
+  }
+
+  function clearBlobsFor(docId) {
+    const prefix = String(docId || '') + ':';
+    for (const k of Object.keys(S.blobs)) {
+      if (k.startsWith(prefix)) delete S.blobs[k];
+    }
+  }
+
+  function requestFileBlob(f) {
+    if (!f || !f.path) return;
+    const key = blobKey(f.path);
+    const cur = S.blobs[key];
+    if (cur && cur.pending) return;
+    if (cur && !cur.error && cur.newLines) return;
+    S.blobs[key] = { pending: true };
+    if (cur && cur._t) clearTimeout(cur._t);
+    S.blobs[key]._t = setTimeout(() => {
+      const b = S.blobs[key];
+      if (b && b.pending) {
+        S.blobs[key] = { error: '宿主没回应（需要 Reload Window）' };
+        toast('展开失败：宿主是旧版，先 Reload Window');
+        showStatus('');
+        renderDiff({ keepScroll: true });
+      }
+    }, 4000);
+    showStatus('正在读取原文以便展开…', 'loading');
+    vscode.postMessage({ type: 'fileBlob', path: f.path, oldPath: f.oldPath || f.path });
+  }
+
+  function onFileBlob(m) {
+    const key = blobKey(m.path);
+    const prev = S.blobs[key];
+    if (prev && prev._t) clearTimeout(prev._t);
+    showStatus('');
+    if (m.error) {
+      S.blobs[key] = { error: String(m.error) };
+      toast('展开失败：' + m.error);
+      const f = curFile();
+      if (f && f.path === m.path) {
+        const st = fileExpand(f.path);
+        st.full = false;
+      }
+      return;
+    }
+    S.blobs[key] = {
+      newLines: splitSourceLines(m.newText),
+      oldLines: splitSourceLines(m.oldText),
+    };
+    const f = curFile();
+    if (f && f.path === m.path && S.open) renderDiff({ keepScroll: true });
+  }
+
+  function ensureBlobThenRender(f) {
+    if (!f) return;
+    const b = getBlob(f.path);
+    if (b && b.pending) return;
+    if (b && b.error) {
+      toast('展开失败：' + b.error);
+      return;
+    }
+    if (b && b.newLines) {
+      renderDiff({ keepScroll: true });
+      return;
+    }
+    requestFileBlob(f);
+  }
+
+  function anyGapOpen(f) {
+    if (!f) return false;
+    const st = fileExpand(f.path);
+    return !!(st.full || Object.keys(st.ids || {}).length);
+  }
+
+  function openGap(f, gapId) {
+    if (!f) return;
+    const st = fileExpand(f.path);
+    st.ids[gapId] = true;
+    ensureBlobThenRender(f);
+  }
+
+  function closeGap(f, gapId) {
+    if (!f) return;
+    const st = fileExpand(f.path);
+    if (st.full) {
+      // 全文展开时收起一条：其余缝保持开着，不要一把全合上
+      st.full = false;
+      st.ids = {};
+      const blob = getBlob(f.path);
+      const oldLen = blob && blob.oldLines ? blob.oldLines.length : 0;
+      const newLen = blob && blob.newLines ? blob.newLines.length : 0;
+      for (const g of hunkGaps(f.hunks, oldLen, newLen)) {
+        if (g.id !== gapId) st.ids[g.id] = true;
+      }
+    } else if (st.ids) {
+      delete st.ids[gapId];
+    }
+    renderDiff({ keepScroll: true });
+  }
+
+  function toggleExpandAll(f) {
+    if (!f || f.binary || !f.hunks || !f.hunks.length) {
+      toast('这个文件没有可展开的源码');
+      return;
+    }
+    const st = fileExpand(f.path);
+    // 点过单条缝也算「已经展开」：再点 e / 头上的按钮要能收回去，不能只认 full
+    if (anyGapOpen(f)) {
+      st.full = false;
+      st.ids = {};
+      renderDiff({ keepScroll: true });
+      return;
+    }
+    st.full = true;
+    ensureBlobThenRender(f);
   }
 
   function renderTabs() {
@@ -1490,6 +1680,7 @@ document.body.classList.add('i-standard');
     // 同一个文档重算（手动 r 刷新 / 切 ¶ / 宿主在存盘后自动重读）也必须保住位置，
     // 否则 applyDoc 读到的 v.idx 是空的，会把人拉回第一个文件、滚回顶部。
     captureView();
+    clearBlobsFor(id); // 重算后原文可能变了，展开用的缓存作废（展开开关还在 view.expand 里）
     let d = docOf(id);
     if (!d) {
       d = { id, view: {} };
@@ -1659,14 +1850,122 @@ document.body.classList.add('i-standard');
   }
 
   // 行号列宽度按「本文件出现过的最大行号位数」自适应，短文件列不会白白很宽
-  function gutterDigits(hunks) {
+  function gutterDigits(hunks, oldLen, newLen) {
     let max = 1;
     for (const h of hunks) {
       const m = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(h.header);
       if (!m) continue;
       max = Math.max(max, Number(m[1]) + Number(m[2] || 0), Number(m[3]) + Number(m[4] || 0));
     }
+    if (oldLen) max = Math.max(max, oldLen);
+    if (newLen) max = Math.max(max, newLen);
     return String(max).length;
+  }
+
+  // ---------- 把 git 省略的源码补回 diff ----------
+  // 宿主给的是 --unified=3 的改动岛。岛与岛之间的行号是连续的，中间那段没发给我们。
+  // 展开 = 按行号从新旧两侧原文切片，当成普通上下文行插进去（行首空格，送 Chat 才合法）。
+  function splitSourceLines(text) {
+    if (text == null || text === '') return [];
+    const parts = String(text).split('\n');
+    if (parts.length && parts[parts.length - 1] === '') parts.pop();
+    return parts;
+  }
+
+  function parseHunkSpan(header) {
+    const m = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(header || '');
+    if (!m) return null;
+    const oldStart = Number(m[1]);
+    const oldCount = m[2] !== undefined ? Number(m[2]) : 1;
+    const newStart = Number(m[3]);
+    const newCount = m[4] !== undefined ? Number(m[4]) : 1;
+    return {
+      oldStart,
+      oldCount,
+      newStart,
+      newCount,
+      oldEnd: oldStart === 0 ? 0 : oldStart + oldCount - 1,
+      newEnd: newStart === 0 ? 0 : newStart + newCount - 1,
+    };
+  }
+
+  function hunkGaps(hunks, oldLen, newLen) {
+    const spans = [];
+    for (const h of hunks || []) {
+      const s = parseHunkSpan(h.header);
+      if (s) spans.push(s);
+    }
+    const gaps = [];
+    if (!spans.length) return gaps;
+    const first = spans[0];
+    if (first.oldStart > 1 || first.newStart > 1) {
+      gaps.push({
+        id: 'head',
+        after: -1,
+        oldFrom: first.oldStart > 0 ? 1 : 0,
+        oldTo: first.oldStart > 1 ? first.oldStart - 1 : 0,
+        newFrom: first.newStart > 0 ? 1 : 0,
+        newTo: first.newStart > 1 ? first.newStart - 1 : 0,
+      });
+    }
+    for (let i = 0; i < spans.length - 1; i++) {
+      const a = spans[i];
+      const b = spans[i + 1];
+      const oldFrom = a.oldEnd + 1;
+      const oldTo = b.oldStart - 1;
+      const newFrom = a.newEnd + 1;
+      const newTo = b.newStart - 1;
+      if (oldFrom <= oldTo || newFrom <= newTo) {
+        gaps.push({ id: i + '-' + (i + 1), after: i, oldFrom, oldTo, newFrom, newTo });
+      }
+    }
+    const last = spans[spans.length - 1];
+    const oldFrom = last.oldEnd + 1;
+    const newFrom = last.newEnd + 1;
+    const oLen = Number(oldLen) || 0;
+    const nLen = Number(newLen) || 0;
+    if (oLen || nLen) {
+      if (oldFrom <= oLen || newFrom <= nLen) {
+        gaps.push({
+          id: 'tail',
+          after: spans.length - 1,
+          oldFrom,
+          oldTo: oLen,
+          newFrom,
+          newTo: nLen,
+        });
+      }
+    }
+    return gaps;
+  }
+
+  function gapLineCount(g) {
+    const oldN = g.oldFrom > 0 && g.oldTo >= g.oldFrom ? g.oldTo - g.oldFrom + 1 : 0;
+    const newN = g.newFrom > 0 && g.newTo >= g.newFrom ? g.newTo - g.newFrom + 1 : 0;
+    return Math.max(oldN, newN);
+  }
+
+  function ctxRowsForGap(gap, oldLines, newLines) {
+    const oldN = gap.oldFrom > 0 && gap.oldTo >= gap.oldFrom ? gap.oldTo - gap.oldFrom + 1 : 0;
+    const newN = gap.newFrom > 0 && gap.newTo >= gap.newFrom ? gap.newTo - gap.newFrom + 1 : 0;
+    const n = Math.max(oldN, newN);
+    const rows = [];
+    const olds = oldLines || [];
+    const news = newLines || [];
+    for (let i = 0; i < n; i++) {
+      const o = i < oldN ? gap.oldFrom + i : 0;
+      const nw = i < newN ? gap.newFrom + i : 0;
+      const text = nw ? (news[nw - 1] != null ? news[nw - 1] : '') : (olds[o - 1] != null ? olds[o - 1] : '');
+      if (i < oldN && i < newN) {
+        rows.push({ raw: ' ' + text, kind: 'ctx', old: String(o), new: String(nw) });
+      } else if (i < newN) {
+        rows.push({ raw: '+' + text, kind: 'add', old: '', new: String(nw) });
+      } else {
+        rows.push({ raw: '-' + text, kind: 'del', old: String(o), new: '' });
+      }
+    }
+    fillJumpTargets(rows);
+    return rows;
   }
 
   // ---------- 语法着色（Gerrit / CodeMirror default 主题风格） ----------
@@ -1997,6 +2296,40 @@ document.body.classList.add('i-standard');
     return hh;
   }
 
+  function makeExpandBar(gap, f, opened) {
+    const n = gapLineCount(gap);
+    const bar = document.createElement('div');
+    bar.className = opened ? 'hx hx-open' : 'hx';
+    bar.dataset.gap = gap.id;
+    const where = gap.id === 'head' ? '文件头' : gap.id === 'tail' ? '文件末尾' : '中间';
+    const ico = document.createElement('span');
+    ico.className = 'hx-ico';
+    ico.textContent = opened ? '▲' : '▼';
+    const label = document.createElement('span');
+    const verb = opened ? '收起' : '展开';
+    if (n > 0) {
+      label.appendChild(document.createTextNode(verb + where + ' '));
+      const num = document.createElement('span');
+      num.className = 'hx-n';
+      num.textContent = String(n);
+      label.appendChild(num);
+      label.appendChild(document.createTextNode(opened ? ' 行' : ' 行未改的源码'));
+    } else {
+      label.textContent = verb + where + (opened ? '的源码' : '省略的源码');
+    }
+    bar.appendChild(ico);
+    bar.appendChild(label);
+    bar.title = opened
+      ? '点这里把这段补进去的源码收起来'
+      : '点这里把 git 省略的上下文补进 diff（再点一次收起）';
+    bar.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      if (opened) closeGap(f, gap.id);
+      else openGap(f, gap.id);
+    });
+    return bar;
+  }
+
   // 一行 = 旧行号 | 新行号 | +/- | 正文
   function makeLine(r, path, hIdx) {
     const line = document.createElement('div');
@@ -2148,7 +2481,12 @@ document.body.classList.add('i-standard');
     return line;
   }
 
-  function renderDiff() {
+  function renderDiff(opts) {
+    // 展开/收起只是同一份 diff 重画：必须先把「停在哪一行」记下来，
+    // 否则下面一清空 DOM，再滚到 0，体感就是「点了展开，人被甩回文件头，条也不见了」。
+    const keep = !!(opts && opts.keepScroll);
+    const keepTop = keep ? topVisibleLine() : 0;
+    const keepY = keep && $('#diffbody') ? $('#diffbody').scrollTop : 0;
     const head = $('#diffhead');
     const note = $('#diffnote');
     const ph = $('#placeholder');
@@ -2230,6 +2568,18 @@ document.body.classList.add('i-standard');
     jump.textContent = S.isWorking ? '打开文件 ↗' : '打开文件（当前工作区）↗';
     jump.addEventListener('click', () => openSourceFile());
     head.appendChild(jump);
+    if (!f.binary && f.hunks && f.hunks.length) {
+      const xb = document.createElement('button');
+      xb.className = 'jump hx-btn';
+      xb.id = 'btn-expand-all';
+      const opened = anyGapOpen(f);
+      xb.textContent = opened ? '▲ 收起上下文' : '▼ 展开全文';
+      xb.title = opened
+        ? '把补进去的源码收起来，只留 git 的改动岛（e / E）'
+        : '把省略的源码补进 diff，红绿行还在原位（e）';
+      xb.addEventListener('click', () => toggleExpandAll(f));
+      head.appendChild(xb);
+    }
 
     const hunks = f.hunks;
     if (!hunks.length) {
@@ -2244,20 +2594,49 @@ document.body.classList.add('i-standard');
     }
 
     body.className = S.sideBySide ? 'sbs-mode' : '';
-    body.style.setProperty('--ln-digits', String(gutterDigits(hunks)));
-    const frag = document.createDocumentFragment();
-    let hIdx = 0;
-    for (const h of hunks) {
-      frag.appendChild(makeHunkHead(h, hIdx));
-      const { rows } = lineNumbers(h);
-      fillJumpTargets(rows); // 给每行算好「点行号跳第几行」（删除行要取消失位置）
+    const blob = getBlob(f.path);
+    const oldLen = blob && blob.oldLines ? blob.oldLines.length : 0;
+    const newLen = blob && blob.newLines ? blob.newLines.length : 0;
+    body.style.setProperty('--ln-digits', String(gutterDigits(hunks, oldLen, newLen)));
+    const st = fileExpand(f.path);
+    const needBlob = st.full || Object.keys(st.ids || {}).length > 0;
+    if (needBlob && (!blob || blob.pending) && !(blob && blob.error)) requestFileBlob(f);
+    const gaps = hunkGaps(hunks, oldLen, newLen);
+    const gapOpen = (g) => !!(st.full || (st.ids && st.ids[g.id]));
+    const midByAfter = {};
+    let headGap = null;
+    let tailGap = null;
+    for (const g of gaps) {
+      if (g.id === 'head') headGap = g;
+      else if (g.id === 'tail') tailGap = g;
+      else midByAfter[g.after] = g;
+    }
+    const appendRows = (rows, hIdx) => {
+      fillJumpTargets(rows);
       if (S.sideBySide) {
         for (const pair of sbsRows(rows)) frag.appendChild(makeSbsRow(pair, f.path, hIdx));
       } else {
         for (const r of rows) frag.appendChild(makeLine(r, f.path, hIdx));
       }
+    };
+    const appendGap = (g, hIdx) => {
+      if (!g) return;
+      const open = gapOpen(g) && blob && blob.newLines;
+      // 展开后条还留着，才能点回去。先画条再画源码：收起按钮停在这段源码上头。
+      frag.appendChild(makeExpandBar(g, f, open));
+      if (open) appendRows(ctxRowsForGap(g, blob.oldLines, blob.newLines), hIdx);
+    };
+    const frag = document.createDocumentFragment();
+    appendGap(headGap, 0);
+    let hIdx = 0;
+    for (const h of hunks) {
+      frag.appendChild(makeHunkHead(h, hIdx));
+      const { rows } = lineNumbers(h);
+      appendRows(rows, hIdx);
+      appendGap(midByAfter[hIdx], hIdx);
       hIdx++;
     }
+    appendGap(tailGap, Math.max(0, hIdx - 1));
     if (f.viewTrunc) {
       const t = document.createElement('div');
       t.className = 'note notrunc';
@@ -2268,7 +2647,11 @@ document.body.classList.add('i-standard');
     S.changeBlocksCache = null;
     if (S.hunkIdx >= hIdx) S.hunkIdx = 0;
     markCurHunk();
-    body.scrollTop = 0;
+    if (keep) {
+      if (!scrollToLine(Number(keepTop)) && keepY > 0) body.scrollTop = keepY;
+    } else {
+      body.scrollTop = 0;
+    }
     refreshSelButton(true);
   }
 
@@ -2288,7 +2671,7 @@ document.body.classList.add('i-standard');
     const blocks = [];
     let cur = null;
     for (const el of body.children) {
-      if (!el.classList.contains('hl')) { cur = null; continue; }  // hunk 头断开
+      if (!el.classList.contains('hl')) { cur = null; continue; }  // hunk 头 / 展开条断开
       const k = el.classList.contains('add')
         ? 'add'
         : el.classList.contains('del')
@@ -2429,7 +2812,7 @@ document.body.classList.add('i-standard');
       return;
     }
     if (mod && e.key !== 'A') return;
-    if (e.repeat && ['n','p','N','P','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','c','b','[',']','r','R'].includes(e.key)) return;
+    if (e.repeat && ['n','p','N','P','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','c','b','[',']','r','R','e','E'].includes(e.key)) return;
 
     switch (e.key) {
       case 'ArrowRight': case 'n': case 'N':
@@ -2479,6 +2862,20 @@ document.body.classList.add('i-standard');
         e.preventDefault(); break;
       case 'o':
         openSourceFile();
+        e.preventDefault(); break;
+      case 'e':
+        toggleExpandAll(curFile());
+        e.preventDefault(); break;
+      case 'E':
+        {
+          const f = curFile();
+          if (f) {
+            const st = fileExpand(f.path);
+            st.full = false;
+            st.ids = {};
+            renderDiff();
+          }
+        }
         e.preventDefault(); break;
       case 'r': case 'R': // refresh：回 git 重算（别处改过 / 刚存盘 / 刚 git add）；Shift+R 全部标签
         requestRefresh(e.shiftKey);
