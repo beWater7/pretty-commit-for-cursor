@@ -35,7 +35,7 @@ const src = (v2) => [
   '  return { x: ctx.x + it.dx, y: ctx.y + it.dy, w: it.w, h: it.h };',
   '}',
   '',
-  'const REALLY_LONG_LINE = "这一行故意做得很长，用来确认横向滚动时两列行号是钉住不动的，并且正文不会从行号下面穿过去";',
+  'const REALLY_LONG_LINE = "这一行故意做得很长，用来确认横向滚动时行号列是钉住不动的，并且正文不会从行号下面穿过去";',
   '',
   'function unusedHelper(a, b) {',
   '  return a + b;',

@@ -207,20 +207,20 @@ console.log('\n[F] 回归：送 Chat 的仍是合法 diff');
     sent.every((l) => l === '' || /^[ +\-\\]/.test(l)),
     '每行都以合法 diff 前缀开头'
   );
-  // 旧的取法等价物：textContent = 旧行号 + 新行号 + 正文，行号会混进去
-  const viaTextContent = rows.map((r) => (r.old || '') + (r.new || '') + r.raw);
+  // 旧的取法等价物：textContent = 行号 + 正文，行号会混进去
+  const viaTextContent = rows.map((r) => (r.new || '') + r.raw);
   ok(
     viaTextContent.join('\n') !== eff(h).join('\n'),
-    '对照：按 textContent 取会把两列行号混进 diff（说明 data-raw 这个修复是必要的）'
+    '对照：按 textContent 取会把行号混进 diff（说明 data-raw 这个修复是必要的）'
   );
   ok(
     viaTextContent.some((l) => /^\d/.test(l)),
-    '对照：textContent 版本确实以行号开头（"7 8 +..."）'
+    '对照：textContent 版本确实以行号开头（"8 +..."）'
   );
   // 行号列不进选区：它不在 data-raw 里，天然不会混进来
   ok(
     !sent.some((l) => /^\s*\d+\s+\d+\s/.test(l)),
-    '没有把 "旧号 新号" 混进送出的文本'
+    '没有把行号列混进送出的文本'
   );
 }
 
@@ -1019,7 +1019,9 @@ function sectionM() {
   );
 
   // ---- M5 行号可点这件事本身 ----
-  ok(/\.ln\[data-ln-jump\] \{ cursor: pointer; \}/.test(html), '可跳的行号有 pointer 光标');  ok(/el\.dataset\.lnJump = String\(r\.jump\)/.test(html), '单页每行挂上跳转目标');
+  ok(/\.ln\[data-ln-jump\] \{ cursor: pointer; \}/.test(html), '可跳的行号有 pointer 光标');
+  ok(/ln\.className = 'ln';/.test(html), '单页只有一个行号格（旧行号列已去掉）');
+  ok(/ln\.dataset\.lnJump = String\(r\.jump\)/.test(html), '单页每行挂上跳转目标');
   ok(/ln\.dataset\.lnJump = String\(r\.jump\)/.test(html), '双页每侧也挂上（两侧都跳同一处，不拿旧行号跳新文件）');
   ok(/const ln = e\.target\.closest\('\.ln'\);/.test(html), '点行号的点击处理接在 diffbody 上');
   ok(
@@ -1071,20 +1073,28 @@ function sectionM() {
   const jumpRow = { raw: ' ctx', kind: 'ctx', old: '7', new: '7', jump: 7 };
   const delRow = { raw: '-gone', kind: 'del', old: '8', new: '', jump: 9 };
   {
+    const line = buildLine.makeLine(jumpRow, 'a.c', 0);
+    const lns = line.children.filter((k) => k._cls.includes('ln'));
+    ok(lns.length === 1, `一行一个行号格（实际 ${lns.length}）`);
+    ok(lns[0].textContent === '7', `行号格显示新行号 7（实际 ${lns[0].textContent}）`);
+    ok(lns[0].dataset.lnJump === '7', '上下文行的行号可点，跳到第 7 行');
+    ok(/打开第 7 行/.test(lns[0].title), '行号带上了「打开第 N 行」的 title 提示');
+    ok(line.dataset.lnJump === '7', '行元素自己也挂了行号（scrollToLine 按行还原要用）');
+  }
+  {
+    // 删除行只有旧行号：旧行号列去掉后，这一格必须留空，也不能点空白就跳走
     const line = buildLine.makeLine(delRow, 'a.c', 0);
     const lns = line.children.filter((k) => k._cls.includes('ln'));
-    ok(lns.length === 2, `一行两个行号格（实际 ${lns.length}）`);
-    ok(
-      lns.every((k) => k.dataset.lnJump === '9'),
-      `删除行：两侧行号都带上「消失位置」9（实际 ${lns.map((k) => k.dataset.lnJump).join('/')}）`
-    );
-    ok(lns.every((k) => /打开第 9 行/.test(k.title)), '行号带上了「打开第 N 行」的 title 提示');
-    ok(line.dataset.lnJump === '9', '行元素自己也挂了行号（scrollToLine 按行还原要用）');
+    ok(lns.length === 1, `删除行也只有一个行号格（实际 ${lns.length}）`);
+    ok(lns[0].textContent === '', '删除行的行号格留空（不再显示旧行号）');
+    ok(lns[0].dataset.lnJump === undefined && lns[0].title === '', '空行号格不可点、也没有 title');
+    ok(line.dataset.lnJump === '9', '行元素仍挂着「消失位置」9（scrollToLine / 顶部行仍可用）');
   }
   {
     // 没有跳转目标的行走另一条分支：不给 dataset、不给 title（光看结构断言看不出这点）
     const noJump = buildLine.makeLine({ raw: '+x', kind: 'add', old: '', new: '', jump: null }, 'a.c', 0);
     const lns = noJump.children.filter((k) => k._cls.includes('ln'));
+    ok(lns.length === 1, `一行一个行号格（实际 ${lns.length}）`);
     ok(lns.every((k) => k.dataset.lnJump === undefined), '没算出目标行的行号不可点（不发 dataset）');
     ok(lns.every((k) => k.title === ''), '也没有 title —— 鼠标移上去不该骗人说能跳');
   }

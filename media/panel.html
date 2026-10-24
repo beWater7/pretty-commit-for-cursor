@@ -432,14 +432,15 @@
     line-height: 1.5;
     padding: 4px 0;
     tab-size: 4;               /* 制表符按 4 走；默认 8 在缩进深的代码里很散 */
-    /* 两列行号的宽度：按本文件最大行号位数算，renderDiff 里设 --ln-digits。
+    /* 行号列的宽度：按本文件最大行号位数算，renderDiff 里设 --ln-digits。
        数字本身是 1ch，加上左右各 4px 内边距再留一点余量 —— 行号列要尽量窄，
        宽度留给代码。 */
     --sign-w: 14px;
     /* 行号单独缩小字号，列宽按 digit 数收紧 */
     --ln-w: calc(var(--ln-digits, 3) * 7px + 4px);
   }
-  /* 一行 = 旧行号 | 新行号 | 符号 | 正文。
+  /* 一行 = 行号 | 符号 | 正文。
+     行号只显示新文件的行号；删除行没有新行号（旧行号那列已经去掉），行号格留空。
      行号列用略暗的灰底（--gutter-bg），和正文分成两层，**任何行都是这个底** ——
      add/del 行的行号列不染，色带从符号列开始，而且符号列与代码区同色（一条均匀色带）。
      .hl 自己也要给不透明底色：行号列和符号列都是 sticky 的，横向滚动时正文要从它们底下滑过去。 */
@@ -472,14 +473,13 @@
     font-size: 10.5px;
     line-height: 1.5em;
     font-weight: 400;
+    border-right: 1px solid var(--lnx);
   }
   /* add/del 行的符号列：**和代码区一个底色**（inherit 整行的色带），不另外加深/提亮。
      整行从符号列到代码末尾是一条均匀色带，分隔靠 +/- 符号本身的颜色，不靠第二条色带。
      符号列 sticky，必须不透明；底色 inherit 自 .hl（或双页的 .side），本身就是不透明的。
      右侧那条 1px 分隔线也一并透明掉，否则色带上会多出一条灰色细线。 */
   .hl.add .sign, .hl.del .sign { background: inherit; border-right-color: transparent; }
-  .ln-old { left: 0; border-right: 1px solid var(--lnx); }
-  .ln-new { left: var(--ln-w); border-right: 1px solid var(--lnx); }
   /* 行号就是「跳到原文这一行」的把手：行号本来就 user-select:none，
      拿它当点击热区不会和拖选代码打架（点代码区仍然是选文字）。
      只有真的有对应行号的行才可点 —— 见 makeLine/makeSbsCell 里的 data-ln-jump。 */
@@ -501,7 +501,7 @@
     color: var(--ln-fg);
     background: var(--gutter-bg);
     position: sticky;
-    left: calc(var(--ln-w) * 2);
+    left: var(--ln-w);
     border-right: 1px solid var(--lnx);
   }
   /* 符号用 highlight 色系里更实的那一笔 */
@@ -536,8 +536,8 @@
     background: var(--hh-bg);
     color: var(--hh-fg);
     font-weight: 600;
-    /* 左边距跨过两列行号，让 @@ 与代码列对齐 */
-    padding: 2px 10px 2px calc(var(--ln-w, 48px) * 2 + var(--sign-w, 14px) + 6px);
+    /* 左边距跨过「行号 + 符号」两列，让 @@ 与代码列对齐 */
+    padding: 2px 10px 2px calc(var(--ln-w, 48px) + var(--sign-w, 14px) + 6px);
     margin-top: 2px;
     cursor: pointer;
   }
@@ -2330,35 +2330,31 @@ document.body.classList.add('i-standard');
     return bar;
   }
 
-  // 一行 = 旧行号 | 新行号 | +/- | 正文
+  // 一行 = 行号 | +/- | 正文
+  // 行号只显示新文件那一列；删除行只有旧行号（旧行号列已去掉），行号格留空、不可点。
   function makeLine(r, path, hIdx) {
     const line = document.createElement('div');
     line.className = 'hl ' + r.kind;
     line.dataset.h = String(hIdx);
-    // 渲染时把原始行存一份：行首多了两列行号，textContent 会变成
-    // "7 8 const x = 1" 这种东西，送 Chat 必须用这份干净的原文（见 selectedLines）。
+    // 渲染时把原始行存一份：行首多了行号，textContent 会变成
+    // "8 const x = 1" 这种东西，送 Chat 必须用这份干净的原文（见 selectedLines）。
     line.dataset.raw = r.raw;
     if (r.old) line.dataset.lnOld = r.old;
     if (r.new) line.dataset.lnNew = r.new;
     // 这一行对应新文件的第几行（重算后按行还原滚动位置要用，见 scrollToLine）
     if (Number.isFinite(r.jump)) line.dataset.lnJump = String(r.jump);
 
-    const oldLn = document.createElement('span');
-    oldLn.className = 'ln ln-old';
-    oldLn.textContent = r.old;
-    const newLn = document.createElement('span');
-    newLn.className = 'ln ln-new';
-    newLn.textContent = r.new;
+    const ln = document.createElement('span');
+    ln.className = 'ln';
+    ln.textContent = r.new;
     // 行号点击 = 在编辑器里打开这个文件的这一行（精确到行，见 openSourceFile）。
     // 普通行号列本身没有别的用途，拿它当热区不冲突：点代码区仍是选文字。
-    if (Number.isFinite(r.jump)) {
-      const tip = S.isWorking
+    // 删除行没有新行号（格子是空的），不给点击热区，免得点空白处跳到别处。
+    if (r.new && Number.isFinite(r.jump)) {
+      ln.dataset.lnJump = String(r.jump);
+      ln.title = S.isWorking
         ? `打开第 ${r.jump} 行（可编辑）`
         : `打开第 ${r.jump} 行（该提交时的快照，只读）；Alt+点击 = 打开当前工作区文件`;
-      for (const el of [oldLn, newLn]) {
-        el.dataset.lnJump = String(r.jump);
-        el.title = tip;
-      }
     }
     const sign = document.createElement('span');
     sign.className = 'sign';
@@ -2377,8 +2373,7 @@ document.body.classList.add('i-standard');
     code.className = 'code';
     fillCode(code, r.raw, path);
 
-    line.appendChild(oldLn);
-    line.appendChild(newLn);
+    line.appendChild(ln);
     line.appendChild(sign);
     line.appendChild(code);
     return line;
@@ -2982,8 +2977,8 @@ document.body.classList.add('i-standard');
         }
       }
     }
-    // 优先取渲染时存的原始行：行首多了两列行号，textContent 会拼成
-    // "7 8 +const x = 1" 这种东西，送 Chat 必须是合法 diff。
+    // 优先取渲染时存的原始行：行首多了行号，textContent 会拼成
+    // "8 +const x = 1" 这种东西，送 Chat 必须是合法 diff。
     // .hh（hunk 头）没有 data-raw，自动走 textContent 兜底。
     const lines = els.slice(si, ei + 1).map((x) => (x.dataset.raw != null ? x.dataset.raw : x.textContent));
     if (headerText && !lines[0].startsWith('@@')) lines.unshift(headerText);

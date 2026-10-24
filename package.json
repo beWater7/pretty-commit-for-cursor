@@ -199,7 +199,7 @@
             "半粗（Semibold）"
           ],
           "default": 500,
-          "description": "右侧 diff 代码字重。行号保持 400，避免两列数字发糊。默认 500（中等，更易辨认）；可选 400 / 550 / 600。"
+          "description": "右侧 diff 代码字重。行号保持 400，避免数字发糊。默认 500（中等，更易辨认）；可选 400 / 550 / 600。"
         },
         "prettyCommit.diffFontSize": {
           "type": "number",
